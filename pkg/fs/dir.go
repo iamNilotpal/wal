@@ -7,7 +7,7 @@ import (
 )
 
 func CreateDir(dirName string) error {
-	err := os.Mkdir(dirName, os.ModeExclusive)
+	err := os.Mkdir(dirName, 0750)
 	if err == nil {
 		return nil
 	}

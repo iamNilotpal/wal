@@ -13,8 +13,8 @@ func CreateFile(fileName string) (*os.File, error) {
 	return file, err
 }
 
-func GetLastSegmentId(fileNames []string, prefix string) (uint8, error) {
-	var lastSegmentId uint8 = 1
+func GetLastSegmentId(fileNames []string, prefix string) (uint64, error) {
+	var lastSegmentId uint64 = 1
 
 	for _, name := range fileNames {
 		_, segment := filepath.Split(name)
@@ -24,7 +24,7 @@ func GetLastSegmentId(fileNames []string, prefix string) (uint8, error) {
 			return 0, err
 		}
 
-		segmentId := uint8(id)
+		segmentId := uint64(id)
 		if segmentId > lastSegmentId {
 			lastSegmentId = segmentId
 		}
@@ -33,6 +33,6 @@ func GetLastSegmentId(fileNames []string, prefix string) (uint8, error) {
 	return lastSegmentId, nil
 }
 
-func GenerateSegmentName(prefix string, id uint8) string {
+func GenerateSegmentName(prefix string, id uint64) string {
 	return fmt.Sprintf("%s%d", prefix, id)
 }

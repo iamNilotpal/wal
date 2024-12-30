@@ -3,15 +3,19 @@ package wal
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/iamNilotpal/wal/internal/serialization"
+	"github.com/iamNilotpal/wal/pkg/checksum"
 	"github.com/iamNilotpal/wal/pkg/fs"
 )
 
+// New creates a new instance of the WAL with the provided config.
 func New(opts *Config) (*WAL, error) {
 	context, cancel := context.WithCancel(context.Background())
 
@@ -46,6 +50,8 @@ func New(opts *Config) (*WAL, error) {
 	return &wal, nil
 }
 
+// Creates logging director with the provided name.
+// If the folder exists reads last segment file and stores the required data.
 func (wal *WAL) loadOrCreate() error {
 	// Create the directory, if exists do nothing.
 	if err := fs.CreateDir(wal.logDirName); err != nil {
@@ -93,7 +99,7 @@ func (wal *WAL) loadOrCreate() error {
 	}
 
 	wal.currSegmentFile = file
-	wal.segmentSize = uint64(stat.Size())
+	wal.segmentSize = uint32(stat.Size())
 	wal.currSegmentFileId = latestSegmentId
 	wal.writeBuffer = bufio.NewWriter(file)
 	wal.totalSegment = uint8(len(fileNames))
@@ -105,10 +111,12 @@ func (wal *WAL) loadOrCreate() error {
 	return nil
 }
 
+// Resets sync interval timer.
 func (wal *WAL) resetSyncTimer() {
 	wal.syncTimer.Reset(wal.syncInterval)
 }
 
+// Syncs data in the background. Optionally responds to events.
 func (wal *WAL) syncInBackground() {
 	for {
 		select {
@@ -119,7 +127,7 @@ func (wal *WAL) syncInBackground() {
 				}
 
 				wal.mutex.Lock()
-				wal.state = StateSyncing
+				wal.state = StateBackgroundSync
 				err := wal.autoFsync()
 				wal.state = StateIdle
 				wal.mutex.Unlock()
@@ -138,6 +146,8 @@ func (wal *WAL) syncInBackground() {
 	}
 }
 
+// Flushes data to the current segment file.
+// Optionally syncs the data to disk if the lastFsynced time is older then desired interval.
 func (wal *WAL) autoFsync() error {
 	if err := wal.writeBuffer.Flush(); err != nil {
 		return err
@@ -156,11 +166,55 @@ func (wal *WAL) autoFsync() error {
 	return nil
 }
 
+func (wal *WAL) generateWALCommand(data []byte) *WALCommand {
+	crcData := append(data, byte(wal.lastLSN))
+	sum := checksum.Checksum(crcData)
+	return &WALCommand{LSN: wal.lastLSN, Data: crcData, Checksum: sum}
+}
+
+func (wal *WAL) writeData(cmd *WALCommand) error {
+	data, err := serialization.MarshalJSON(cmd)
+	if err != nil {
+		return err
+	}
+
+	size := uint32(len(data))
+	if err := binary.Write(wal.writeBuffer, binary.LittleEndian, size); err != nil {
+		return err
+	}
+
+	_, err = wal.writeBuffer.Write(data)
+	return err
+}
+
+// Writes data to wal.
+func (wal *WAL) Write(data []byte) error {
+	wal.mutex.Lock()
+	defer func() {
+		wal.state = StateIdle
+		wal.mutex.Unlock()
+	}()
+
+	wal.lastLSN++
+	wal.state = StateWriteData
+	cmd := wal.generateWALCommand(data)
+	return wal.writeData(cmd)
+}
+
+// Retrieves the wal state.
 func (wal *WAL) State() WALState {
 	return wal.state
 }
 
+// Flushes data to the current segment file. Optionally if fsync is true then syncs the data to disk.
 func (wal *WAL) Sync(fsync bool) error {
+	wal.mutex.Lock()
+	defer func() {
+		wal.state = StateIdle
+		wal.mutex.Unlock()
+	}()
+
+	wal.state = StateManualSync
 	if err := wal.writeBuffer.Flush(); err != nil {
 		return err
 	}
@@ -177,10 +231,12 @@ func (wal *WAL) Sync(fsync bool) error {
 	return nil
 }
 
+// Closes all timers and syncs the buffered data into the disk.
 func (wal *WAL) Close() {
 	wal.mutex.Lock()
 	defer wal.mutex.Unlock()
 
+	wal.state = StateClosing
 	wal.syncTimer.Stop()
 	wal.cancelFunc()
 	wal.Sync(true)

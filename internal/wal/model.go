@@ -11,25 +11,31 @@ import (
 type WALState string
 
 type Config struct {
+	// Max log segment files.
 	MaxLogSegments uint8
-	MaxSegmentSize uint64
-	LogDirName     string
-	SegmentPrefix  string
-	SyncInterval   time.Duration
-	Listeners      *WalEventListeners
+	// Max log segment file size.
+	MaxSegmentSize uint32
+	// Directory to store log files.
+	LogDirName string
+	// Log segment prefix.
+	SegmentPrefix string
+	// Background data sync to disk interval.
+	SyncInterval time.Duration
+	// Event listeners.
+	Listeners *WalEventListeners
 }
 
 type WAL struct {
 	maxLogSegments uint8
-	maxSegmentSize uint64
+	maxSegmentSize uint32
 	logDirName     string
 	segmentPrefix  string
 	listeners      *WalEventListeners
 
-	currSegmentFileId uint8
 	totalSegment      uint8
+	currSegmentFileId uint64
 	lastLSN           uint64
-	segmentSize       uint64
+	segmentSize       uint32
 	state             WALState
 	currSegmentFile   *os.File
 	lastFsyncedAt     time.Time
@@ -44,12 +50,15 @@ type WAL struct {
 
 type WalEventListeners struct {
 	OnSyncError func(error, *os.File)
-	OnSyncStart func(currSegmentFileId uint8, lastSequenceId uint64, currSegmentFile *os.File)
-	OnSyncEnd   func(currSegmentFileId uint8, lastSequenceId uint64, currSegmentFile *os.File)
+	OnSyncStart func(currSegmentFileId uint64, lastSequenceId uint64, currSegmentFile *os.File)
+	OnSyncEnd   func(currSegmentFileId uint64, lastSequenceId uint64, currSegmentFile *os.File)
 }
 
-type WalData struct {
-	SequenceId uint64 `json:"sequenceId"`
-	Data       []byte `json:"data"`
-	Checksum   uint32 `json:"checksum"`
+type WALCommand struct {
+	// Log Sequence Number.
+	LSN uint64 `json:"lsn"`
+	// Origin Data.
+	Data []byte `json:"data"`
+	// CRC Checksum of LSN and Data.
+	Checksum uint32 `json:"checksum"`
 }
