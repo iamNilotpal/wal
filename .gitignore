@@ -18,3 +18,5 @@ bin/
 tmp
 
 logs/
+
+.DS_Store

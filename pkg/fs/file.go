@@ -13,7 +13,7 @@ func CreateFile(fileName string) (*os.File, error) {
 	return file, err
 }
 
-func GetLastSegmentId(fileNames []string, prefix string) (uint64, error) {
+func GetLatestSegmentId(fileNames []string, prefix string) (uint64, error) {
 	var lastSegmentId uint64 = 0
 
 	for _, name := range fileNames {

@@ -14,9 +14,9 @@ func main() {
 	wal, err := wal.New(
 		&wal.Config{
 			MaxLogSegments: 20,
-			LogDirName:     "logs",
-			MaxSegmentSize: 10485760,
+			LogDirectory:   "logs",
 			SyncInterval:   time.Second * 5,
+			MaxSegmentSize: 10485760, // 10MB
 		},
 	)
 	if err != nil {
@@ -26,4 +26,10 @@ func main() {
 
 	state := wal.State()
 	logger.Infow("state", "state", state)
+
+	wal.Write([]byte("Hello World - 1"))
+	wal.Write([]byte("Hello World - 2"))
+	wal.Write([]byte("Hello World - 3"))
+
+	time.Sleep(time.Second * 6)
 }
