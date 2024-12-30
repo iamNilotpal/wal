@@ -34,5 +34,5 @@ func GetLastSegmentId(fileNames []string, prefix string) (uint8, error) {
 }
 
 func GenerateSegmentName(prefix string, id uint8) string {
-	return fmt.Sprintf("%s-%d", prefix, id)
+	return fmt.Sprintf("%s%d", prefix, id)
 }

@@ -3,6 +3,7 @@ package wal
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -10,9 +11,6 @@ import (
 
 	"github.com/iamNilotpal/wal/pkg/fs"
 )
-
-const startSegmentId uint8 = 0
-const segmentPrefix = "segment-"
 
 func New(opts *WALOpts) (*WAL, error) {
 	context, cancel := context.WithCancel(context.Background())
@@ -22,23 +20,29 @@ func New(opts *WALOpts) (*WAL, error) {
 	}
 
 	wal := WAL{
-		segmentSize:    0,
-		totalSegment:   0,
 		cancelFunc:     cancel,
 		ctx:            context,
-		log:            opts.Logger,
+		listeners:      opts.Listeners,
 		logDirName:     opts.LogDirName,
+		state:          StateInitializing,
 		segmentPrefix:  opts.SegmentPrefix,
 		maxLogSegments: opts.MaxLogSegments,
 		maxSegmentSize: opts.MaxSegmentSize,
+		syncInterval:   opts.SyncInterval,
 		syncTimer:      time.NewTicker(opts.SyncInterval),
+	}
+
+	if wal.listeners == nil {
+		wal.listeners = &WalEventListeners{}
 	}
 
 	if err := wal.loadOrCreate(); err != nil {
 		return nil, err
 	}
 
+	wal.state = StateIdle
 	go wal.syncInBackground()
+
 	return &wal, nil
 }
 
@@ -48,36 +52,51 @@ func (wal *WAL) loadOrCreate() error {
 		return err
 	}
 
-	// Read all files, only valid if the folder contains any file.
+	// Read all log segment files, only valid if the folder contains log files.
 	fileNames, err := fs.ReadFileNames(filepath.Join(wal.logDirName, wal.segmentPrefix+"*"))
 	if err != nil {
+		fmt.Printf("ReadFileNames %+v", err)
 		return err
 	}
 
+	// If there is no file and create a new file with segment id.
+	// Store it and create a new buffered write for that file.
 	if fileNames == nil || len(fileNames) == 0 {
 		file, err := fs.CreateFile(filepath.Join(wal.logDirName, fs.GenerateSegmentName(wal.segmentPrefix, startSegmentId)))
 		if err != nil {
 			return err
 		}
 
-		wal.currSegment = file
-		wal.currSegmentId = startSegmentId
+		wal.totalSegment++
+		wal.segmentSize = 0
+		wal.lastLSN = startLSN
+		wal.currSegmentFile = file
+		wal.currSegmentFileId = startSegmentId
 		wal.writeBuffer = bufio.NewWriter(file)
 		return nil
 	}
 
-	id, err := fs.GetLastSegmentId(fileNames, wal.segmentPrefix)
+	latestSegmentId, err := fs.GetLastSegmentId(fileNames, wal.segmentPrefix)
 	if err != nil {
 		return err
 	}
 
-	wal.currSegmentId = id
-	fileName := filepath.Join(wal.logDirName, fs.GenerateSegmentName(wal.segmentPrefix, wal.currSegmentId))
-
-	file, err := os.OpenFile(fileName, 0644, os.ModeAppend|os.ModeExclusive)
+	fileName := filepath.Join(wal.logDirName, fs.GenerateSegmentName(wal.segmentPrefix, latestSegmentId))
+	file, err := os.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return err
 	}
+
+	stat, err := file.Stat()
+	if err != nil {
+		return err
+	}
+
+	wal.currSegmentFile = file
+	wal.segmentSize = uint64(stat.Size())
+	wal.currSegmentFileId = latestSegmentId
+	wal.writeBuffer = bufio.NewWriter(file)
+	wal.totalSegment = uint8(len(fileNames))
 
 	if _, err := file.Seek(0, io.SeekEnd); err != nil {
 		return err
@@ -86,16 +105,32 @@ func (wal *WAL) loadOrCreate() error {
 	return nil
 }
 
+func (wal *WAL) resetSyncTimer() {
+	wal.syncTimer.Reset(wal.syncInterval)
+}
+
 func (wal *WAL) syncInBackground() {
 	for {
 		select {
 		case <-wal.syncTimer.C:
 			{
-				wal.mutex.Lock()
-				if err := wal.currSegment.Sync(); err != nil {
-					return
+				if wal.listeners.OnSyncStart != nil {
+					wal.listeners.OnSyncStart(wal.currSegmentFileId, wal.lastLSN, wal.currSegmentFile)
 				}
+
+				wal.mutex.Lock()
+				wal.state = StateSyncing
+				err := wal.autoFsync()
+				wal.state = StateIdle
 				wal.mutex.Unlock()
+
+				if err != nil && wal.listeners.OnSyncError != nil {
+					wal.listeners.OnSyncError(err, wal.currSegmentFile)
+				}
+
+				if wal.listeners.OnSyncEnd != nil {
+					wal.listeners.OnSyncEnd(wal.currSegmentFileId, wal.lastLSN, wal.currSegmentFile)
+				}
 			}
 		case <-wal.ctx.Done():
 			return
@@ -103,12 +138,50 @@ func (wal *WAL) syncInBackground() {
 	}
 }
 
+func (wal *WAL) autoFsync() error {
+	if err := wal.writeBuffer.Flush(); err != nil {
+		return err
+	}
+
+	diff := time.Since(wal.lastFsyncedAt)
+	if diff >= autoFsyncDuration {
+		if err := wal.currSegmentFile.Sync(); err != nil {
+			return err
+		} else {
+			wal.lastFsyncedAt = time.Now()
+		}
+	}
+
+	wal.resetSyncTimer()
+	return nil
+}
+
+func (wal *WAL) State() WALState {
+	return wal.state
+}
+
+func (wal *WAL) Sync(fsync bool) error {
+	if err := wal.writeBuffer.Flush(); err != nil {
+		return err
+	}
+
+	if fsync {
+		if err := wal.currSegmentFile.Sync(); err != nil {
+			return err
+		} else {
+			wal.lastFsyncedAt = time.Now()
+		}
+	}
+
+	wal.resetSyncTimer()
+	return nil
+}
+
 func (wal *WAL) Close() {
-	wal.log.Infoln("closing wal")
+	wal.mutex.Lock()
+	defer wal.mutex.Unlock()
+
 	wal.syncTimer.Stop()
 	wal.cancelFunc()
-
-	wal.mutex.Lock()
-	wal.currSegment.Sync()
-	wal.mutex.Unlock()
+	wal.Sync(true)
 }

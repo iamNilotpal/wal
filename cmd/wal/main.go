@@ -15,7 +15,6 @@ func main() {
 		&wal.WALOpts{
 			MaxLogSegments: 20,
 			LogDirName:     "logs",
-			Logger:         logger,
 			MaxSegmentSize: 10485760,
 			SyncInterval:   time.Second * 5,
 		},
@@ -23,6 +22,9 @@ func main() {
 	if err != nil {
 		logger.Fatalln("err", err)
 	}
+
+	state := wal.State()
+	logger.Infow("state", "state", state)
 
 	defer wal.Close()
 }
