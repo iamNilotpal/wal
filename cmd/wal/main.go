@@ -12,7 +12,7 @@ func main() {
 	logger.Info("starting wal service")
 
 	wal, err := wal.New(
-		&wal.WALOpts{
+		&wal.Config{
 			MaxLogSegments: 20,
 			LogDirName:     "logs",
 			MaxSegmentSize: 10485760,

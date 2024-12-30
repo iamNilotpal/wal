@@ -12,7 +12,7 @@ import (
 	"github.com/iamNilotpal/wal/pkg/fs"
 )
 
-func New(opts *WALOpts) (*WAL, error) {
+func New(opts *Config) (*WAL, error) {
 	context, cancel := context.WithCancel(context.Background())
 
 	if opts.SegmentPrefix == "" {

@@ -10,7 +10,7 @@ import (
 
 type WALState string
 
-type WALOpts struct {
+type Config struct {
 	MaxLogSegments uint8
 	MaxSegmentSize uint64
 	LogDirName     string
