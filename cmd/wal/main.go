@@ -13,8 +13,8 @@ func main() {
 
 	wal, err := wal.New(
 		&wal.WALOpts{
-			MaxSegments:    20,
-			LogDir:         "logs",
+			MaxLogSegments: 20,
+			LogDirName:     "logs",
 			Logger:         logger,
 			MaxSegmentSize: 10485760,
 			SyncInterval:   time.Second * 5,
