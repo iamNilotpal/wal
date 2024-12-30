@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/binary"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -61,7 +60,6 @@ func (wal *WAL) loadOrCreate() error {
 	// Read all log segment files, only valid if the folder contains log files.
 	fileNames, err := fs.ReadFileNames(filepath.Join(wal.logDirName, wal.segmentPrefix+"*"))
 	if err != nil {
-		fmt.Printf("ReadFileNames %+v", err)
 		return err
 	}
 
@@ -239,5 +237,8 @@ func (wal *WAL) Close() {
 	wal.state = StateClosing
 	wal.syncTimer.Stop()
 	wal.cancelFunc()
-	wal.Sync(true)
+
+	wal.writeBuffer.Flush()
+	wal.currSegmentFile.Sync()
+	wal.currSegmentFile.Close()
 }

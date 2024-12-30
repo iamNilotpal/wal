@@ -20,11 +20,10 @@ func main() {
 		},
 	)
 	if err != nil {
-		logger.Fatalln("err", err)
+		logger.Fatalln("error", err)
 	}
+	defer wal.Close()
 
 	state := wal.State()
 	logger.Infow("state", "state", state)
-
-	defer wal.Close()
 }

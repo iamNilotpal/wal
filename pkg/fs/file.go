@@ -14,7 +14,7 @@ func CreateFile(fileName string) (*os.File, error) {
 }
 
 func GetLastSegmentId(fileNames []string, prefix string) (uint64, error) {
-	var lastSegmentId uint64 = 1
+	var lastSegmentId uint64 = 0
 
 	for _, name := range fileNames {
 		_, segment := filepath.Split(name)
