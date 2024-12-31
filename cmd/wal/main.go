@@ -30,6 +30,4 @@ func main() {
 	wal.Write([]byte("Hello World - 1"))
 	wal.Write([]byte("Hello World - 2"))
 	wal.Write([]byte("Hello World - 3"))
-
-	time.Sleep(time.Second * 6)
 }

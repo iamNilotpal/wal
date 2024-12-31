@@ -4,12 +4,15 @@ import (
 	"bufio"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
-	"github.com/iamNilotpal/wal/internal/serialization"
+	"github.com/iamNilotpal/wal/internal/serialize"
 	"github.com/iamNilotpal/wal/pkg/checksum"
 	"github.com/iamNilotpal/wal/pkg/fs"
 )
@@ -27,7 +30,6 @@ func New(opts *Config) (*WAL, error) {
 		segmentSize:             0,
 		cancelFunc:              cancel,
 		context:                 context,
-		lastLogSequenceNumber:   startLogSequenceNumber,
 		activeSegmentId:         startSegmentId,
 		logDirectory:            opts.LogDirectory,
 		state:                   StateInitializing,
@@ -35,6 +37,7 @@ func New(opts *Config) (*WAL, error) {
 		maxLogSegments:          opts.MaxLogSegments,
 		maxSegmentSize:          opts.MaxSegmentSize,
 		segmentPrefix:           opts.SegmentFilePrefix,
+		lastLogSequenceNumber:   startLogSequenceNumber,
 		oldSegmentDeletionLimit: opts.OldSegmentDeletionLimit,
 		syncInterval:            opts.SyncInterval,
 		syncTimer:               time.NewTicker(opts.SyncInterval),
@@ -67,7 +70,7 @@ func (wal *WAL) loadOrCreate() error {
 	}
 
 	// Read all log segment files, only valid if the folder contains log files.
-	fileNames, err := fs.ReadFileNames(filepath.Join(wal.logDirectory, wal.segmentPrefix+"*"))
+	fileNames, err := fs.ReadDirectory(filepath.Join(wal.logDirectory, wal.segmentPrefix+"*"))
 	if err != nil {
 		return err
 	}
@@ -75,7 +78,7 @@ func (wal *WAL) loadOrCreate() error {
 	// If there is no file and create a new file with segment id.
 	// Store it and create a new buffered write for that file.
 	if fileNames == nil || len(fileNames) == 0 {
-		file, err := fs.CreateFile(filepath.Join(wal.logDirectory, fs.GenerateSegmentName(wal.segmentPrefix, startSegmentId)))
+		file, err := fs.CreateFile(filepath.Join(wal.logDirectory, wal.generateSegmentName(wal.segmentPrefix, startSegmentId)))
 		if err != nil {
 			return err
 		}
@@ -86,12 +89,12 @@ func (wal *WAL) loadOrCreate() error {
 		return nil
 	}
 
-	latestSegmentId, err := fs.GetLatestSegmentId(fileNames, wal.segmentPrefix)
+	latestSegmentId, err := wal.getLatestSegmentId(fileNames, wal.segmentPrefix)
 	if err != nil {
 		return err
 	}
 
-	fileName := filepath.Join(wal.logDirectory, fs.GenerateSegmentName(wal.segmentPrefix, latestSegmentId))
+	fileName := filepath.Join(wal.logDirectory, wal.generateSegmentName(wal.segmentPrefix, latestSegmentId))
 	file, err := os.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return err
@@ -152,6 +155,76 @@ func (wal *WAL) syncInBackground() {
 	}
 }
 
+// Writes data to wal.
+func (wal *WAL) Write(data []byte) error {
+	wal.mutex.Lock()
+	defer func() {
+		wal.state = StateIdle
+		wal.mutex.Unlock()
+	}()
+
+	wal.state = StateWriting
+
+	rotationNeeded, err := wal.checkIfRotationNeeded()
+	if err != nil {
+		return err
+	}
+
+	if rotationNeeded {
+		if err := wal.rotateWAL(); err != nil {
+			return err
+		}
+	}
+
+	wal.lastLogSequenceNumber++
+	cmd := wal.generateWALCommand(data)
+	return wal.writeData(cmd)
+}
+
+// Flushes data to the current segment file. If fsync is true then syncs the data to disk.
+func (wal *WAL) Sync(fsync bool) error {
+	wal.mutex.Lock()
+	defer func() {
+		wal.state = StateIdle
+		wal.mutex.Unlock()
+	}()
+
+	wal.state = StateSyncing
+	if err := wal.buffer.Flush(); err != nil {
+		return err
+	}
+
+	if fsync {
+		if err := wal.segment.Sync(); err != nil {
+			return err
+		} else {
+			wal.lastFsyncedAt = time.Now()
+		}
+	}
+
+	wal.resetSyncTimer()
+	return nil
+}
+
+// Retrieves the wal state.
+func (wal *WAL) State() WALState {
+	return wal.state
+}
+
+// Closes all timers and syncs the buffered data into the disk.
+func (wal *WAL) Close() {
+	wal.mutex.Lock()
+	defer wal.mutex.Unlock()
+
+	wal.state = StateClosing
+	wal.syncTimer.Stop()
+	wal.cancelFunc()
+
+	wal.buffer.Flush()
+	wal.segment.Sync()
+	wal.segment.Close()
+}
+
 // Flushes data to the current segment file.
 // Optionally syncs the data to disk if the lastFsynced time is older then desired interval.
 func (wal *WAL) autoFsync() error {
@@ -172,14 +245,41 @@ func (wal *WAL) autoFsync() error {
 	return nil
 }
 
+// Generates checksum of the provided data and prepares a WALCommand.
 func (wal *WAL) generateWALCommand(data []byte) *WALCommand {
 	crcData := append(data, byte(wal.lastLogSequenceNumber))
 	sum := checksum.Checksum(crcData)
 	return &WALCommand{LogSequenceNumber: wal.lastLogSequenceNumber, Data: crcData, Checksum: sum}
 }
 
+// Generates log segment filename. Example: segment-0, segment-1.
+func (wal *WAL) generateSegmentName(prefix string, id uint64) string {
+	return fmt.Sprintf("%s%d", prefix, id)
+}
+
+// Gets the latestSegmentId from log segment names.
+func (wal *WAL) getLatestSegmentId(fileNames []string, prefix string) (uint64, error) {
+	var lastSegmentId uint64 = 0
+
+	for _, name := range fileNames {
+		_, segment := filepath.Split(name)
+
+		id, err := strconv.Atoi(strings.TrimPrefix(segment, prefix))
+		if err != nil {
+			return 0, err
+		}
+
+		segmentId := uint64(id)
+		if segmentId > lastSegmentId {
+			lastSegmentId = segmentId
+		}
+	}
+
+	return lastSegmentId, nil
+}
+
 func (wal *WAL) writeData(cmd *WALCommand) error {
-	data, err := serialization.MarshalJSON(cmd)
+	data, err := serialize.MarshalJSON(cmd)
 	if err != nil {
 		return err
 	}
@@ -191,31 +291,6 @@ func (wal *WAL) writeData(cmd *WALCommand) error {
 
 	_, err = wal.buffer.Write(data)
 	return err
-}
-
-// Writes data to wal.
-func (wal *WAL) Write(data []byte) error {
-	wal.mutex.Lock()
-	defer func() {
-		wal.state = StateIdle
-		wal.mutex.Unlock()
-	}()
-
-	rotationNeeded, err := wal.checkIfRotationNeeded()
-	if err != nil {
-		return err
-	}
-
-	if rotationNeeded {
-		if err := wal.rotateWAL(); err != nil {
-			return err
-		}
-	}
-
-	wal.lastLogSequenceNumber++
-	wal.state = StateWriting
-	cmd := wal.generateWALCommand(data)
-	return wal.writeData(cmd)
 }
 
 func (wal *WAL) checkIfRotationNeeded() (bool, error) {
@@ -252,7 +327,7 @@ func (wal *WAL) rotateWAL() error {
 	}
 
 	// Create a new log segment file
-	fileName := filepath.Join(wal.logDirectory, fs.GenerateSegmentName(wal.segmentPrefix, wal.activeSegmentId))
+	fileName := filepath.Join(wal.logDirectory, wal.generateSegmentName(wal.segmentPrefix, wal.activeSegmentId))
 	file, err := os.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return err
@@ -271,7 +346,7 @@ func (wal *WAL) deleteOldestEntries() error {
 	firstSegmentId := wal.activeSegmentId - uint64(wal.maxLogSegments)
 
 	if wal.maxLogSegments <= 5 {
-		path := filepath.Join(wal.logDirectory, fs.GenerateSegmentName(wal.segmentPrefix, firstSegmentId))
+		path := filepath.Join(wal.logDirectory, wal.generateSegmentName(wal.segmentPrefix, firstSegmentId))
 		if err := os.Remove(path); err != nil {
 			return err
 		}
@@ -281,7 +356,7 @@ func (wal *WAL) deleteOldestEntries() error {
 
 	var count uint8
 	for {
-		path := filepath.Join(wal.logDirectory, fs.GenerateSegmentName(wal.segmentPrefix, firstSegmentId))
+		path := filepath.Join(wal.logDirectory, wal.generateSegmentName(wal.segmentPrefix, firstSegmentId))
 		if err := os.Remove(path); err != nil {
 			return err
 		}
@@ -296,48 +371,4 @@ func (wal *WAL) deleteOldestEntries() error {
 	}
 
 	return nil
-}
-
-// Retrieves the wal state.
-func (wal *WAL) State() WALState {
-	return wal.state
-}
-
-// Flushes data to the current segment file. Optionally if fsync is true then syncs the data to disk.
-func (wal *WAL) Sync(fsync bool) error {
-	wal.mutex.Lock()
-	defer func() {
-		wal.state = StateIdle
-		wal.mutex.Unlock()
-	}()
-
-	wal.state = StateSyncing
-	if err := wal.buffer.Flush(); err != nil {
-		return err
-	}
-
-	if fsync {
-		if err := wal.segment.Sync(); err != nil {
-			return err
-		} else {
-			wal.lastFsyncedAt = time.Now()
-		}
-	}
-
-	wal.resetSyncTimer()
-	return nil
-}
-
-// Closes all timers and syncs the buffered data into the disk.
-func (wal *WAL) Close() {
-	wal.mutex.Lock()
-	defer wal.mutex.Unlock()
-
-	wal.state = StateClosing
-	wal.syncTimer.Stop()
-	wal.cancelFunc()
-
-	wal.buffer.Flush()
-	wal.segment.Sync()
-	wal.segment.Close()
 }
