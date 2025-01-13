@@ -11,7 +11,7 @@ import (
 type Config struct {
 	WAL              WALConfig `yaml:"wal"`
 	StoragePath      string    `yaml:"storage_path"`      // Path to log files
-	CompressionLevel int       `yaml:"compression_level"` // Compression level (0-9)
+	CompressionLevel uint8     `yaml:"compression_level"` // Compression level (0-9)
 	EnableMetrics    bool      `yaml:"enable_metrics"`    // Enable metrics collection
 }
 
@@ -22,7 +22,7 @@ type WALConfig struct {
 	BufferSize    uint32        `yaml:"buffer_size"`    // Size of write buffers
 	SyncOnWrite   bool          `yaml:"sync_on_write"`  // Sync after each write
 	BatchSize     uint16        `yaml:"batch_size"`     // Maximum batch size
-	RetentionDays uint16        `yaml:"retention_days"` // Days to retain logs
+	RetentionDays uint8         `yaml:"retention_days"` // Days to retain logs
 }
 
 // Returns a Config struct with reasonable default values.
@@ -35,7 +35,7 @@ func DefaultConfig() *Config {
 			RetentionDays: 7,
 			SyncOnWrite:   true,
 			BatchSize:     1000,
-			BufferSize:    1024 * 1024 * 5,   // 5MB
+			BufferSize:    1024 * 1024,       // 1MB
 			MaxFileSize:   1024 * 1024 * 100, // 100MB
 			MaxFileAge:    24 * time.Hour,    // 1 day
 		},

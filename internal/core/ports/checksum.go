@@ -1,7 +1,7 @@
 package ports
 
 // Defines an interface for calculating and verifying data checksums.
-type Checksum interface {
+type ChecksumPort interface {
 	// Calculates a 32-bit checksum for the provided data.
 	// The specific checksum algorithm used depends on the implementation.
 	// Returns the calculated checksum value.
