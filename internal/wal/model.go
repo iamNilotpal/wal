@@ -6,6 +6,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/iamNilotpal/wal/pkg/fs"
 )
 
 // WALState represents the current state of the Write-Ahead Log.
@@ -37,6 +39,8 @@ type WAL struct {
 	state                   WALState  // Current state of the wal.
 	segment                 *os.File  // File handle for the active log segment.
 	lastFsyncedAt           time.Time // Timestamp of the last successful data sync.
+
+	fs fs.FileSystem
 
 	syncTimer    *time.Ticker  // Ticker for periodic syncing.
 	syncInterval time.Duration // Interval between background sync operations.

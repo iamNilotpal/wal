@@ -19,6 +19,7 @@ import (
 
 // New creates a new instance of the WAL with the provided config.
 func New(opts *Config) (*WAL, error) {
+	fileSystem := fs.NewLocalFileSystem()
 	context, cancel := context.WithCancel(context.Background())
 
 	if opts.SegmentFilePrefix == "" {
@@ -30,6 +31,7 @@ func New(opts *Config) (*WAL, error) {
 		segmentSize:             0,
 		cancelFunc:              cancel,
 		context:                 context,
+		fs:                      fileSystem,
 		activeSegmentId:         startSegmentId,
 		logDirectory:            opts.LogDirectory,
 		state:                   StateInitializing,
@@ -65,12 +67,12 @@ func New(opts *Config) (*WAL, error) {
 // If the folder exists reads last segment file and stores the required data.
 func (wal *WAL) loadOrCreate() error {
 	// Create the directory, if exists do nothing.
-	if err := fs.CreateDir(wal.logDirectory); err != nil {
+	if err := wal.fs.CreateDir(wal.logDirectory, 0750, false); err != nil {
 		return err
 	}
 
 	// Read all log segment files, only valid if the folder contains log files.
-	fileNames, err := fs.ReadDirectory(filepath.Join(wal.logDirectory, wal.segmentPrefix+"*"))
+	fileNames, err := wal.fs.ReadDir(filepath.Join(wal.logDirectory, wal.segmentPrefix+"*"))
 	if err != nil {
 		return err
 	}
@@ -78,7 +80,9 @@ func (wal *WAL) loadOrCreate() error {
 	// If there is no file and create a new file with segment id.
 	// Store it and create a new buffered write for that file.
 	if fileNames == nil || len(fileNames) == 0 {
-		file, err := fs.CreateFile(filepath.Join(wal.logDirectory, wal.generateSegmentName(wal.segmentPrefix, startSegmentId)))
+		file, err := wal.fs.CreateFile(
+			filepath.Join(wal.logDirectory, wal.generateSegmentName(wal.segmentPrefix, startSegmentId)), false,
+		)
 		if err != nil {
 			return err
 		}
