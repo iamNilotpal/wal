@@ -1,3 +1,10 @@
 {
-  "cSpell.words": ["dylib", "GOARCH", "Infoln", "Infow", "installsuffix"]
+  "cSpell.words": [
+    "dylib",
+    "Fatalw",
+    "GOARCH",
+    "Infoln",
+    "Infow",
+    "installsuffix"
+  ]
 }
