@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package pb;
+
+option go_package = "internal/core/domain/protobuf";
+
+enum EntryType {
+  ENTRY_TYPE_UNSPECIFIED = 0;  // Default value for proto3
+  ENTRY_TYPE_NORMAL = 1;       // Normal log entry
+  ENTRY_TYPE_CHECKPOINT = 2;   // Checkpoint entry for recovery
+  ENTRY_TYPE_ROTATION = 3;     // Log rotation marker
+  ENTRY_TYPE_COMPRESSED = 4;   // Compressed entry
+  ENTRY_TYPE_METADATA = 5;     // Metadata entry
+}
+
+message EntryHeader {
+  uint32 magic = 1;        // Magic number for validation
+  EntryType type = 2;      // Type of the entry
+  int64 timestamp = 3;     // Entry creation timestamp
+  uint32 payloadSize = 4; // Size of the payload
+  uint32 checksum = 5;     // CRC32 checksum
+  uint64 prevOffset = 6;  // Previous entry offset
+  uint64 sequence = 7;     // Monotonic sequence number
+  uint32 compression = 8;  // Compression type used (using uint32 instead of uint8 for proto3 compatibility)
+  uint32 version = 9;      // Entry format version (using uint32 instead of uint8 for proto3 compatibility)
+}
+
+message Entry {
+  EntryHeader header = 1;
+  bytes payload = 2;
+}
