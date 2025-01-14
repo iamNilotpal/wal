@@ -3,3 +3,6 @@ build:
 
 run: build
 	@./bin/wal
+
+gen-pb:
+	protoc --go_out=internal/core/domain/proto --go_opt=paths=source_relative pkg/protobuf/entry.proto

@@ -3,8 +3,12 @@
     "dylib",
     "Fatalw",
     "GOARCH",
+    "GOPATH",
     "Infoln",
     "Infow",
-    "installsuffix"
+    "installsuffix",
+    "klauspost",
+    "Mpkg",
+    "protoc"
   ]
 }
