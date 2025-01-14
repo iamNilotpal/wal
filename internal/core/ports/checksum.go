@@ -1,13 +1,16 @@
 package ports
 
-// Defines an interface for calculating and verifying data checksums.
+// Checksum provides essential checksum operations
 type ChecksumPort interface {
-	// Calculates a 32-bit checksum for the provided data.
-	// The specific checksum algorithm used depends on the implementation.
-	// Returns the calculated checksum value.
-	Checksum(data []byte) uint32
+	// Calculate returns checksum for given data
+	Calculate(data []byte) uint64
 
-	// Validates whether the provided data matches the expected checksum.
-	// Returns true if the calculated checksum of the data matches the provided checksum, false otherwise.
-	Verify(data []byte, checksum uint32) bool
+	// Verify checks if data matches expected checksum
+	Verify(data []byte, expected uint64) bool
+
+	// Size returns the size of the checksum in bytes
+	Size() uint8
+
+	// Name returns algorithm identifier
+	Name() string
 }
