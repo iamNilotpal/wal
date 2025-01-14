@@ -2,8 +2,6 @@ package checksum
 
 import (
 	"hash/crc32"
-
-	"github.com/iamNilotpal/wal/internal/core/domain"
 )
 
 type crc32IEEE struct {
@@ -13,7 +11,7 @@ type crc32IEEE struct {
 
 func NewCRC32IEEE() *crc32IEEE {
 	return &crc32IEEE{
-		name:  string(domain.CRC32IEEE),
+		name:  string(CRC32IEEE),
 		table: crc32.MakeTable(crc32.IEEE),
 	}
 }

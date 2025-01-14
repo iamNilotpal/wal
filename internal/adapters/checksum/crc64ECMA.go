@@ -2,8 +2,6 @@ package checksum
 
 import (
 	"hash/crc64"
-
-	"github.com/iamNilotpal/wal/internal/core/domain"
 )
 
 type crc64ECMA struct {
@@ -13,7 +11,7 @@ type crc64ECMA struct {
 
 func NewCR64ECMA() *crc64ECMA {
 	return &crc64ECMA{
-		name:  string(domain.CRC64ECMA),
+		name:  string(CRC64ECMA),
 		table: crc64.MakeTable(crc64.ECMA),
 	}
 }

@@ -3,8 +3,6 @@ package checksum
 import (
 	sha1_lib "crypto/sha1"
 	"encoding/binary"
-
-	"github.com/iamNilotpal/wal/internal/core/domain"
 )
 
 type sha1 struct {
@@ -12,7 +10,7 @@ type sha1 struct {
 }
 
 func NewSHA1() *sha1 {
-	return &sha1{name: string(domain.SHA1)}
+	return &sha1{name: string(SHA1)}
 }
 
 func (s *sha1) Calculate(data []byte) uint64 {

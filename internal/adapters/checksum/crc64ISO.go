@@ -2,8 +2,6 @@ package checksum
 
 import (
 	"hash/crc64"
-
-	"github.com/iamNilotpal/wal/internal/core/domain"
 )
 
 type crc64ISO struct {
@@ -13,7 +11,7 @@ type crc64ISO struct {
 
 func NewCRC64ISO() *crc64ISO {
 	return &crc64ISO{
-		name:  string(domain.CRC64ISO),
+		name:  string(CRC64ISO),
 		table: crc64.MakeTable(crc64.ISO),
 	}
 }
