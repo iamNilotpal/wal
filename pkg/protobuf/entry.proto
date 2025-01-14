@@ -2,30 +2,91 @@ syntax = "proto3";
 
 package pb;
 
-option go_package = "internal/core/domain/protobuf";
+// Go package path for generated code
+option go_package = "github.com/iamNilotpal/wal/internal/core/domain/protobuf";
 
+// EntryType defines the different types of entries that can appear in the WAL.
+// Each type serves a specific purpose in the WAL's operation and recovery process.
 enum EntryType {
-  ENTRY_TYPE_UNSPECIFIED = 0;  // Default value for proto3
-  ENTRY_TYPE_NORMAL = 1;       // Normal log entry
-  ENTRY_TYPE_CHECKPOINT = 2;   // Checkpoint entry for recovery
-  ENTRY_TYPE_ROTATION = 3;     // Log rotation marker
-  ENTRY_TYPE_COMPRESSED = 4;   // Compressed entry
-  ENTRY_TYPE_METADATA = 5;     // Metadata entry
+    // Default zero value as required by proto3.
+    // This should never appear in actual entries.
+    ENTRY_TYPE_UNSPECIFIED = 0;
+
+    // Normal data entry containing user payload.
+    // These form the majority of entries and contain actual data modifications.
+    ENTRY_TYPE_NORMAL = 1;
+
+    // Checkpoint entries mark consistent states in the WAL.
+    // Used during recovery to find safe starting points and avoid replaying the entire log.
+    // Contains metadata about the checkpoint state.
+    ENTRY_TYPE_CHECKPOINT = 2;
+
+    // Rotation entries indicate the start of a new segment.
+    // Written when the WAL rotates to a new file.
+    // Contains metadata about the old and new segments.
+    ENTRY_TYPE_ROTATION = 3;
+
+    // Marks entries that use compression.
+    // The compression algorithm and level are specified in the header.
+    // Used to optimize storage space.
+    ENTRY_TYPE_COMPRESSED = 4;
+
+    // System-level metadata entries.
+    // Used for WAL management, configuration changes, and administrative data.
+    // Not part of the user data stream.
+    ENTRY_TYPE_METADATA = 5;
 }
 
+// EntryHeader contains metadata and validation information for each WAL entry.
+// Fixed-size structure that precedes every entry's payload.
 message EntryHeader {
-  uint32 magic = 1;        // Magic number for validation
-  EntryType type = 2;      // Type of the entry
-  int64 timestamp = 3;     // Entry creation timestamp
-  uint32 payloadSize = 4; // Size of the payload
-  uint32 checksum = 5;     // CRC32 checksum
-  uint64 prevOffset = 6;  // Previous entry offset
-  uint64 sequence = 7;     // Monotonic sequence number
-  uint32 compression = 8;  // Compression type used (using uint32 instead of uint8 for proto3 compatibility)
-  uint32 version = 9;      // Entry format version (using uint32 instead of uint8 for proto3 compatibility)
+    // Magic number (e.g., 0xDEADBEEF) to validate entry boundaries.
+    // Used to detect corruption and find valid entries.
+    uint32 magic = 1;
+
+    // Type of the entry, determining how it should be processed.
+    // See EntryType enum for possible values.
+    EntryType type = 2;
+
+    // Unix timestamp in nanoseconds when the entry was created.
+    // Used for time-based recovery and debugging.
+    int64 timestamp = 3;
+
+    // Size of the entry's payload in bytes.
+    // Used to read variable-length payloads and verify integrity.
+    uint32 payloadSize = 4;
+
+    // Used to detect corruption and ensure data integrity.
+    uint64 checksum = 5;
+
+    // Offset of the previous entry in the log.
+    // Enables backward traversal and helps in recovery.
+    uint64 prevOffset = 6;
+
+    // Monotonically increasing sequence number.
+    // Ensures proper ordering during recovery and helps detect missing entries.
+    uint64 sequence = 7;
+
+    // Compression algorithm identifier.
+    // 0 means no compression, other values map to specific algorithms.
+    // Using uint32 instead of uint8 for proto3 compatibility.
+    uint32 compression = 8;
+
+    // Entry format version number.
+    // Allows for future format changes while maintaining backward compatibility.
+    // Using uint32 instead of uint8 for proto3 compatibility.
+    uint32 version = 9;
 }
 
+// Entry represents a complete WAL entry including its header and payload.
+// This is the fundamental unit of storage in the WAL.
 message Entry {
-  EntryHeader header = 1;
-  bytes payload = 2;
+    // Metadata and validation information for the entry.
+    // Fixed-size structure with fields defined above.
+    EntryHeader header = 1;
+
+    // Actual data payload of the entry.
+    // Variable-length byte array containing the data to be written.
+    // May be compressed according to the header's compression field.
+    bytes payload = 2;
 }
