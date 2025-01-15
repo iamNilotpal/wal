@@ -50,3 +50,8 @@ func New(opts *domain.WALOptions) (*WAL, error) {
 
 	return &wal, nil
 }
+
+func (wal *WAL) Close() error {
+	wal.cancel()
+	return wal.sm.Close()
+}
