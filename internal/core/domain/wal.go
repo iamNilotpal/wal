@@ -38,7 +38,7 @@ type WALOptions struct {
 	// True provides better durability but worse performance.
 	// False provides better performance but risks data loss on power failure.
 	//
-	// Default: true
+	// Default: false
 	SyncOnFlush bool
 
 	// RetentionDays specifies how many days to keep rotated WAL files.
@@ -81,12 +81,13 @@ type WALOptions struct {
 	// Default: 5 seconds
 	FlushInterval time.Duration
 
-	// Corruption detection.
+	// ChecksumOptions configures integrity verification settings for WAL segments.
 	ChecksumOptions *ChecksumOptions
 
-	// CompressionOptions configures the compression behavior for WAL segments.
+	// CompressionOptions defines settings for WAL segment compression.
 	CompressionOptions *CompressionOptions
 
-	// SegmentOptions defines configurable parameters for WAL segments.
+	// SegmentOptions specifies configuration parameters for WAL segments including
+	// size limits, retention policies, and storage locations.
 	SegmentOptions *SegmentOptions
 }
