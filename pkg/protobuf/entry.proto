@@ -40,10 +40,6 @@ enum EntryType {
 // EntryHeader contains metadata and validation information for each WAL entry.
 // Fixed-size structure that precedes every entry's payload.
 message EntryHeader {
-    // Magic number (e.g., 0xDEADBEEF) to validate entry boundaries.
-    // Used to detect corruption and find valid entries.
-    uint32 magic = 1;
-
     // Type of the entry, determining how it should be processed.
     // See EntryType enum for possible values.
     EntryType type = 2;
