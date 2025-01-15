@@ -3,6 +3,7 @@ package segment
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -186,6 +187,32 @@ func (s *Segment) Write(context context.Context, entry *domain.Entry) error {
 
 func (s *Segment) Flush() error {
 	return nil
+}
+
+// FinalizeAndFlush marks the segment as closed by writing a final metadata entry
+// and ensures all buffered data is written to the underlying storage.
+// The method is idempotent and should be called before closing or archiving
+// the segment to ensure data durability.
+//
+// Returns an error if either writing the final entry or flushing fails.
+func (s *Segment) FinalizeAndFlush() error {
+	entry := domain.Entry{
+		Payload: []byte("Final Entry"),
+		Header: &domain.EntryHeader{
+			Compression: s.compressor.Level(),
+			Type:        domain.EntryMetadata,
+			Timestamp:   time.Now().UnixNano(),
+		},
+	}
+
+	entry.Header.PayloadSize = uint32(binary.Size(entry.Payload))
+	entry.Header.Checksum = s.checksum.Calculate(entry.Payload)
+
+	if err := s.Write(s.ctx, &entry); err != nil {
+		return fmt.Errorf("failed to write final entry : %w", err)
+	}
+
+	return s.Flush()
 }
 
 // Close safely shuts down the segment and releases all associated resources.
