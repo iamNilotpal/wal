@@ -125,6 +125,58 @@ func (sm *SegmentManager) CreateSegment() (*segment.Segment, error) {
 	return newSeg, nil
 }
 
+// Rotate performs a safe transition from the current segment to a new one.
+//
+// The rotation process ensures:
+//   - No entries are lost during transition
+//   - Sequence numbers remain continuous across segments
+//   - Clear markers exist for segment boundaries
+//   - Proper cleanup of resources
+//
+// Returns error if any step fails:
+//   - Writing rotation entry fails
+//   - Finalizing current segment fails
+//   - Closing current segment fails
+//   - Creating new segment fails
+//
+// The new segment becomes active only if all steps succeed.
+func (sm *SegmentManager) Rotate() error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	id := sm.segment.ID()
+	lsn := sm.segment.NextLogSequence()
+
+	entry := &domain.Entry{
+		Payload: []byte(fmt.Sprintf("rotate-%d", id)),
+		Header: &domain.EntryHeader{
+			Sequence:  lsn,
+			Type:      domain.EntryRotation,
+			Timestamp: time.Now().UnixNano(),
+		},
+	}
+
+	if err := sm.segment.Write(sm.ctx, entry); err != nil {
+		return fmt.Errorf("failed to write rotation entry : %w", err)
+	}
+
+	if err := sm.segment.Finalize(); err != nil {
+		return fmt.Errorf("failed to write finalize entry : %w", err)
+	}
+
+	if err := sm.segment.Close(); err != nil {
+		return fmt.Errorf("failed to close segment %d : %w", id, err)
+	}
+
+	newSeg, err := segment.NewSegment(sm.ctx, id+1, lsn+1, sm.opts)
+	if err != nil {
+		return err
+	}
+
+	sm.segment = newSeg
+	return nil
+}
+
 // Scans the segment directory to determine the highest segment ID currently in use.
 //  1. Lists all files matching the segment prefix pattern
 //  2. Parses segment IDs from filenames (format: prefix + number + extension)
