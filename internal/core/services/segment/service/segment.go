@@ -41,11 +41,12 @@ type Segment struct {
 	compressor ports.CompressionPort // Handles data compression/decompression.
 
 	// Core segment properties
-	id     uint64        // Unique monotonically increasing identifier for the segment.
-	path   string        // Absolute file path where segment data is stored.
-	size   uint32        // Current size of segment file in bytes.
-	file   *os.File      // Operating system file handle for I/O operations.
-	writer *bufio.Writer // Buffered writer to optimize write performance.
+	nextLSN uint64        // Log Structured Number.
+	id      uint64        // Unique monotonically increasing identifier for the segment.
+	path    string        // Absolute file path where segment data is stored.
+	size    uint32        // Current size of segment file in bytes.
+	file    *os.File      // Operating system file handle for I/O operations.
+	writer  *bufio.Writer // Buffered writer to optimize write performance.
 
 	// Position tracking for data management and recovery.
 	currentOffset uint64 // Current position where next write will occur.
@@ -77,9 +78,9 @@ type Segment struct {
 // Returns:
 //   - *Segment: Initialized segment instance.
 //   - error: Any error encountered during initialization.
-func NewSegment(ctx context.Context, id uint64, opts *domain.WALOptions) (*Segment, error) {
+func NewSegment(ctx context.Context, id uint64, lsn uint64, opts *domain.WALOptions) (*Segment, error) {
 	fs := fs.NewLocalFileSystem()
-	segment := Segment{id: id, opts: opts, fs: fs}
+	segment := Segment{id: id, opts: opts, fs: fs, nextLSN: lsn}
 
 	// Generate segment file path
 	fileName := segment.generateName()
@@ -181,21 +182,25 @@ func (s *Segment) ID() uint64 {
 	return s.id
 }
 
+func (s *Segment) NextLogSequence() uint64 {
+	return s.nextLSN
+}
+
 func (s *Segment) Write(context context.Context, entry *domain.Entry) error {
 	return nil
 }
 
-func (s *Segment) Flush() error {
+func (s *Segment) Flush(sync bool) error {
 	return nil
 }
 
-// FinalizeAndFlush marks the segment as closed by writing a final metadata entry
+// Finalize marks the segment as closed by writing a final metadata entry
 // and ensures all buffered data is written to the underlying storage.
 // The method is idempotent and should be called before closing or archiving
 // the segment to ensure data durability.
 //
 // Returns an error if either writing the final entry or flushing fails.
-func (s *Segment) FinalizeAndFlush() error {
+func (s *Segment) Finalize() error {
 	entry := domain.Entry{
 		Payload: []byte("Final Entry"),
 		Header: &domain.EntryHeader{
@@ -212,7 +217,7 @@ func (s *Segment) FinalizeAndFlush() error {
 		return fmt.Errorf("failed to write final entry : %w", err)
 	}
 
-	return s.Flush()
+	return s.Flush(true)
 }
 
 // Close safely shuts down the segment and releases all associated resources.
@@ -236,12 +241,14 @@ func (s *Segment) Close() error {
 		return err
 	}
 
-	if err := s.writer.Flush(); err != nil {
-		return fmt.Errorf("error flushing buffer : %w", err)
+	if err := s.Flush(true); err != nil {
+		return err
 	}
 
-	if err := s.file.Sync(); err != nil {
-		return fmt.Errorf("error flushing file contents : %w", err)
+	if !s.opts.SyncOnFlush {
+		if err := s.file.Sync(); err != nil {
+			return fmt.Errorf("error flushing file contents : %w", err)
+		}
 	}
 
 	if err := s.file.Close(); err != nil {
