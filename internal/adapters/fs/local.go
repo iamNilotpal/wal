@@ -20,16 +20,15 @@ func NewLocalFileSystem() *LocalFileSystem {
 func (lfs *LocalFileSystem) CreateDir(dirPath string, permission os.FileMode, force bool) error {
 	stat, err := os.Stat(dirPath)
 	if !force && !os.IsNotExist(err) {
-		err = fmt.Errorf("error in creating directory %s", dirPath)
 		return err
 	}
 
-	if !stat.IsDir() {
+	if stat != nil && !stat.IsDir() {
 		return errors.New("existing path isn't a directory")
 	}
 
 	if err := os.MkdirAll(dirPath, permission); err != nil {
-		return fmt.Errorf("error in creating all directories %s", dirPath)
+		return err
 	}
 
 	return os.Chmod(dirPath, 0755)
@@ -47,7 +46,7 @@ func (lfs *LocalFileSystem) CopyDir(src, dest string) error {
 		return err
 	}
 	if !srcStat.IsDir() {
-		return fmt.Errorf("source path : %s is not a directory", src)
+		return err
 	}
 
 	if err := os.MkdirAll(dest, srcStat.Mode()); err != nil {

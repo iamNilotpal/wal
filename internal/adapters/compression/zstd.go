@@ -32,8 +32,8 @@ type ZstdCompression struct {
 // Higher levels provide better compression at the cost of increased CPU usage and time.
 const (
 	FastestLevel uint8 = 1 // Optimized for speed with minimal compression
-	DefaultLevel uint8 = 6 // Balanced between speed and compression ratio
-	BestLevel    uint8 = 9 // Maximum compression ratio, higher CPU usage
+	DefaultLevel uint8 = 3 // Balanced between speed and compression ratio
+	BestLevel    uint8 = 4 // Maximum compression ratio, higher CPU usage
 )
 
 // NewZstdCompression creates a new zstd compression instance with the specified level.

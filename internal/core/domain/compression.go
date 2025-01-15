@@ -8,11 +8,13 @@ type CompressionOptions struct {
 	// Compression occurs asynchronously after segment rotation.
 	Enable bool
 
-	// Level specifies the compression level (1-9) when Enable is true.
-	// - Level 1: Fastest compression, ~30-40% reduction
-	// - Level 6: Default, balanced compression, ~60-70% reduction
-	// - Level 9: Best compression, ~70-80% reduction, higher CPU usage
-	// Must be between 1 and 9. Default is 6.
+	// Level defines the compression level for zstd when compression is enabled.
+	// Supported levels:
+	//   - SpeedFastest: Fastest compression, equivalent to zstd's fastest mode
+	//   - SpeedDefault: Default balanced compression (≈ zstd level 3)
+	//   - SpeedBetterCompression: Better compression ratio (≈ zstd level 7-8) with 2x-3x CPU usage
+	//   - SpeedBestCompression: Maximum compression regardless of CPU cost
+	// If not specified, SpeedDefault will be used.
 	Level uint8
 
 	// EncoderConcurrency specifies the number of concurrent compression operations.

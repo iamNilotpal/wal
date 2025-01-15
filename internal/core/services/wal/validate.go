@@ -31,15 +31,15 @@ func Validate(opts *domain.WALOptions) error {
 		}
 	}
 
-	if opts.CleanupInterval < time.Second {
+	if opts.CleanupInterval != 0 && opts.CleanupInterval < time.Second {
 		return fmt.Errorf("cleanup interval must be greater than or equal to 1s, got %s", opts.CleanupInterval)
 	}
 
-	if opts.CompactInterval < time.Second {
+	if opts.CompactInterval != 0 && opts.CompactInterval < time.Second {
 		return fmt.Errorf("compact interval must be greater than or equal to 1s, got %s", opts.CleanupInterval)
 	}
 
-	if opts.FlushInterval < time.Second {
+	if opts.FlushInterval != 0 && opts.FlushInterval < time.Second {
 		return fmt.Errorf("flush interval must be greater than or equal to 1s, got %s", opts.FlushInterval)
 	}
 
@@ -54,24 +54,28 @@ func Validate(opts *domain.WALOptions) error {
 		)
 	}
 
-	if err := validateBufferSize(opts.BufferSize); err != nil {
-		return err
+	if opts.BufferSize != 0 {
+		if err := validateBufferSize(opts.BufferSize); err != nil {
+			return err
+		}
 	}
 
-	if opts.ChecksumOptions.Enable {
+	if opts.ChecksumOptions != nil && opts.ChecksumOptions.Enable {
 		if err := checksum.Validate(opts.ChecksumOptions); err != nil {
 			return err
 		}
 	}
 
-	if opts.CompressionOptions.Enable {
+	if opts.CompressionOptions != nil && opts.CompressionOptions.Enable {
 		if err := compression.Validate(opts.CompressionOptions); err != nil {
 			return err
 		}
 	}
 
-	if err := segment.Validate(opts.SegmentOptions); err != nil {
-		return err
+	if opts.SegmentOptions != nil {
+		if err := segment.Validate(opts.SegmentOptions); err != nil {
+			return err
+		}
 	}
 
 	return nil

@@ -42,36 +42,36 @@ enum EntryType {
 message EntryHeader {
     // Type of the entry, determining how it should be processed.
     // See EntryType enum for possible values.
-    EntryType type = 2;
+    EntryType type = 1;
 
     // Unix timestamp in nanoseconds when the entry was created.
     // Used for time-based recovery and debugging.
-    int64 timestamp = 3;
+    int64 timestamp = 2;
 
     // Size of the entry's payload in bytes.
     // Used to read variable-length payloads and verify integrity.
-    uint32 payloadSize = 4;
+    uint32 payloadSize = 3;
 
     // Used to detect corruption and ensure data integrity.
-    uint64 checksum = 5;
+    uint64 checksum = 4;
 
     // Offset of the previous entry in the log.
     // Enables backward traversal and helps in recovery.
-    uint64 prevOffset = 6;
+    uint64 prevOffset = 5;
 
     // Monotonically increasing sequence number.
     // Ensures proper ordering during recovery and helps detect missing entries.
-    uint64 sequence = 7;
+    uint64 sequence = 6;
 
     // Compression algorithm identifier.
     // 0 means no compression, other values map to specific algorithms.
     // Using uint32 instead of uint8 for proto3 compatibility.
-    uint32 compression = 8;
+    uint32 compression = 7;
 
     // Entry format version number.
     // Allows for future format changes while maintaining backward compatibility.
     // Using uint32 instead of uint8 for proto3 compatibility.
-    uint32 version = 9;
+    uint32 version = 8;
 }
 
 // Entry represents a complete WAL entry including its header and payload.

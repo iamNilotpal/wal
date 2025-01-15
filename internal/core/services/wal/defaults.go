@@ -13,7 +13,7 @@ import (
 const (
 	DefaultMinSegmentsKept = 2
 	DefaultMaxSegmentsKept = 10
-	DefaultDirectory       = "/logs"
+	DefaultDirectory       = "./logs"
 
 	DefaultMinBufferSize = 4096     // 4KB
 	DefaultMaxBufferSize = 16777216 // 16MB
