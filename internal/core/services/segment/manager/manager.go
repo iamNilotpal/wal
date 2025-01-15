@@ -92,6 +92,39 @@ func NewSegmentManager(ctx context.Context, opts *domain.WALOptions) (*SegmentMa
 	return &sm, nil
 }
 
+// Creates a new segment and rotates it to become the active segment.
+//
+// Returns:
+//   - The newly created segment if successful.
+//
+// Error if:
+//   - Finalizing current segment fails.
+//   - Closing current segment fails.
+//   - Creating new segment fails.
+func (sm *SegmentManager) CreateSegment() (*segment.Segment, error) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	if err := sm.segment.Finalize(); err != nil {
+		return nil, err
+	}
+
+	id := sm.segment.ID() + 1
+	lsn := sm.segment.NextLogSequence()
+
+	if err := sm.segment.Close(); err != nil {
+		return nil, err
+	}
+
+	newSeg, err := segment.NewSegment(sm.ctx, id, lsn, sm.opts)
+	if err != nil {
+		return nil, err
+	}
+
+	sm.segment = newSeg
+	return newSeg, nil
+}
+
 // Scans the segment directory to determine the highest segment ID currently in use.
 //  1. Lists all files matching the segment prefix pattern
 //  2. Parses segment IDs from filenames (format: prefix + number + extension)
