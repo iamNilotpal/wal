@@ -2,7 +2,11 @@ package sm
 
 import (
 	"context"
+	"encoding/binary"
+	"errors"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -27,7 +31,7 @@ type SegmentManager struct {
 	fs ports.FileSystemPort
 
 	// Segment state tracking
-	activeSegment *segment.Segment // Currently active segment for writing.
+	segment *segment.Segment // Currently active segment for writing.
 
 	// Concurrency control
 	mu     sync.RWMutex       // Guards segment state modifications.
@@ -69,13 +73,19 @@ func NewSegmentManager(ctx context.Context, opts *domain.WALOptions) (*SegmentMa
 		return nil, err
 	}
 
-	latestId, err := sm.getLatestSegmentId()
+	segmentId, err := sm.getLatestSegmentId()
 	if err != nil {
 		cancel()
 		return nil, err
 	}
 
-	if err := sm.loadOrCreateSegment(latestId); err != nil {
+	sequenceId, err := sm.getLatestSequenceId(segmentId)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+
+	if err := sm.loadOrCreateSegment(segmentId, sequenceId); err != nil {
 		return nil, err
 	}
 
@@ -116,17 +126,61 @@ func (sm *SegmentManager) getLatestSegmentId() (uint64, error) {
 	return latestId, nil
 }
 
+// Scans a specific segment file to find the highest sequence number used by any entry.
+//
+// Error if:
+//   - File cannot be opened
+//   - Header reading fails
+//   - Seek operations fail
+//
+// Note: This function assumes header integrity. Corrupted headers may cause
+// incorrect offset calculations and seeking errors.
+func (sm *SegmentManager) getLatestSequenceId(id uint64) (uint64, error) {
+	fileName := fmt.Sprintf("%s%d.log", sm.opts.SegmentOptions.SegmentPrefix, id)
+	path := filepath.Join(sm.opts.Directory, sm.opts.SegmentOptions.SegmentDirectory, fileName)
+
+	var offset uint64
+	var nextSequence uint64
+
+	file, err := os.OpenFile(path, os.O_RDONLY, 0644)
+	if err != nil {
+		return nextSequence, fmt.Errorf("failed to open segment %d : %w", id, err)
+	}
+	defer file.Close()
+
+	for {
+		var header domain.EntryHeader
+		if err := binary.Read(file, binary.LittleEndian, &header); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return 0, fmt.Errorf("error reading header at offset %d: %w", offset, err)
+		}
+
+		if header.Sequence > nextSequence {
+			nextSequence = header.Sequence
+		}
+
+		offset += uint64(binary.Size(header) + int(header.PayloadSize))
+		if _, err := file.Seek(int64(offset), 0); err != nil {
+			return 0, fmt.Errorf("error seeking to next entry: %w at offset %d", err, offset)
+		}
+	}
+
+	return nextSequence, nil
+}
+
 // Initializes a new segment with the given ID and sets it as the active segment.
 // This ensures there is always a valid segment available for writing new entries.
 //
 // Returns an error if segment creation fails.
-func (sm *SegmentManager) loadOrCreateSegment(id uint64) error {
-	segment, err := segment.NewSegment(sm.ctx, id, sm.opts)
+func (sm *SegmentManager) loadOrCreateSegment(id uint64, lsn uint64) error {
+	segment, err := segment.NewSegment(sm.ctx, id, lsn, sm.opts)
 	if err != nil {
 		return err
 	}
 
-	sm.activeSegment = segment
+	sm.segment = segment
 	return nil
 }
 
@@ -159,5 +213,5 @@ func (sm *SegmentManager) Close() error {
 	sm.cleanupTicker.Stop()
 	sm.compactTicker.Stop()
 
-	return sm.activeSegment.Close()
+	return sm.segment.Close()
 }
