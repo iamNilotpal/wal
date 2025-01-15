@@ -11,7 +11,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
-type Config struct {
+type Options struct {
 	Level              uint8
 	EncoderConcurrency uint8
 	DecoderConcurrency uint8
@@ -43,12 +43,12 @@ const (
 // Returns an error if:
 // - The compression level is invalid
 // - The encoder or decoder initialization fails
-func NewZstdCompression(cfg Config) (*ZstdCompression, error) {
+func NewZstdCompression(opts Options) (*ZstdCompression, error) {
 	if err := Validate(
 		&domain.CompressionOptions{
-			Level:              cfg.Level,
-			EncoderConcurrency: cfg.EncoderConcurrency,
-			DecoderConcurrency: cfg.DecoderConcurrency,
+			Level:              opts.Level,
+			EncoderConcurrency: opts.EncoderConcurrency,
+			DecoderConcurrency: opts.DecoderConcurrency,
 		},
 	); err != nil {
 		return nil, err
@@ -56,24 +56,20 @@ func NewZstdCompression(cfg Config) (*ZstdCompression, error) {
 
 	encoder, err := zstd.NewWriter(
 		nil,
-		zstd.WithEncoderLevel(zstd.EncoderLevel(cfg.Level)),
-		zstd.WithEncoderConcurrency(int(cfg.EncoderConcurrency)),
+		zstd.WithEncoderLevel(zstd.EncoderLevel(opts.Level)),
+		zstd.WithEncoderConcurrency(int(opts.EncoderConcurrency)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create encoder: %w", err)
 	}
 
-	decoder, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(int(cfg.DecoderConcurrency)))
+	decoder, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(int(opts.DecoderConcurrency)))
 	if err != nil {
 		encoder.Close()
 		return nil, fmt.Errorf("failed to create decoder: %w", err)
 	}
 
-	return &ZstdCompression{
-		encoder: encoder,
-		decoder: decoder,
-		level:   cfg.Level,
-	}, nil
+	return &ZstdCompression{encoder: encoder, decoder: decoder, level: opts.Level}, nil
 }
 
 // Compress compresses the input data using zstd compression.

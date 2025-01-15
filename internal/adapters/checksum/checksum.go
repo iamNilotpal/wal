@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/iamNilotpal/wal/internal/core/domain"
+	"github.com/iamNilotpal/wal/internal/core/ports"
 )
 
 const (
@@ -23,6 +24,23 @@ const (
 	SHA256 domain.ChecksumAlgorithm = "sha256"
 )
 
+func NewCheckSummer(alg domain.ChecksumAlgorithm) ports.ChecksumPort {
+	switch alg {
+	case CRC32IEEE:
+		return NewCRC32IEEE()
+	case CRC64ISO:
+		return NewCRC64ISO()
+	case CRC64ECMA:
+		return NewCR64ECMA()
+	case SHA1:
+		return NewSHA1()
+	case SHA256:
+		return NewSHA256()
+	default:
+		return NewCRC32IEEE()
+	}
+}
+
 // Returns recommended checksum settings.
 func DefaultOptions() *domain.ChecksumOptions {
 	return &domain.ChecksumOptions{
@@ -33,13 +51,18 @@ func DefaultOptions() *domain.ChecksumOptions {
 	}
 }
 
-func Validate(input *domain.ChecksumOptions) error {
-	if input.Custom == nil {
-		switch input.Algorithm {
+func Validate(opts *domain.ChecksumOptions) error {
+	if opts == nil {
+		return nil
+	}
+
+	if opts.Custom == nil {
+		switch opts.Algorithm {
 		case CRC32IEEE, CRC64ISO, CRC64ECMA, SHA1, SHA256:
 		default:
-			return fmt.Errorf("unsupported checksum algorithm: %s", input.Algorithm)
+			return fmt.Errorf("unsupported checksum algorithm: %s", opts.Algorithm)
 		}
 	}
+
 	return nil
 }

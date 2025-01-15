@@ -25,7 +25,7 @@ func (c *crc32IEEE) Verify(data []byte, expected uint64) bool {
 	return checksum == expected
 }
 
-func (c *crc32IEEE) Size() uint16 {
+func (c *crc32IEEE) Size() uint8 {
 	return crc32.Size
 }
 

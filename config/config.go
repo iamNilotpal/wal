@@ -8,6 +8,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type WALConfig struct {
+	MaxFileSize   uint64        `yaml:"max_file_size"`  // Maximum size before rotation
+	MaxFileAge    time.Duration `yaml:"max_file_age"`   // Maximum age before rotation
+	BufferSize    uint32        `yaml:"buffer_size"`    // Size of write buffers
+	BatchSize     uint16        `yaml:"batch_size"`     // Maximum batch size
+	SyncOnWrite   bool          `yaml:"sync_on_write"`  // Sync after each write
+	RetentionDays uint8         `yaml:"retention_days"` // Days to retain logs
+}
+
 type Config struct {
 	WAL              WALConfig `yaml:"wal"`
 	StoragePath      string    `yaml:"storage_path"`      // Path to log files
@@ -16,14 +25,6 @@ type Config struct {
 }
 
 // Holds WAL-specific configuration
-type WALConfig struct {
-	MaxFileSize   uint64        `yaml:"max_file_size"`  // Maximum size before rotation
-	MaxFileAge    time.Duration `yaml:"max_file_age"`   // Maximum age before rotation
-	BufferSize    uint32        `yaml:"buffer_size"`    // Size of write buffers
-	SyncOnWrite   bool          `yaml:"sync_on_write"`  // Sync after each write
-	BatchSize     uint16        `yaml:"batch_size"`     // Maximum batch size
-	RetentionDays uint8         `yaml:"retention_days"` // Days to retain logs
-}
 
 // Returns a Config struct with reasonable default values.
 func DefaultConfig() *Config {

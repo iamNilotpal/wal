@@ -25,7 +25,7 @@ func (c *crc64ISO) Verify(data []byte, expected uint64) bool {
 	return checksum == expected
 }
 
-func (c *crc64ISO) Size() uint16 {
+func (c *crc64ISO) Size() uint8 {
 	return crc64.Size
 }
 

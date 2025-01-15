@@ -22,23 +22,27 @@ func DefaultOptions() *domain.CompressionOptions {
 // Checks if the compression options are valid and returns an error if any option
 // is outside acceptable bounds. It ensures Level and concurrency settings are within
 // their allowed ranges and handles default values appropriately.
-func Validate(input *domain.CompressionOptions) error {
+func Validate(opts *domain.CompressionOptions) error {
+	if opts == nil {
+		return nil
+	}
+
 	// Validate compression level (1-9)
-	if input.Level < FastestLevel || input.Level > BestLevel {
-		return fmt.Errorf("compression level must be between %d and %d, got %d", FastestLevel, BestLevel, input.Level)
+	if opts.Level < FastestLevel || opts.Level > BestLevel {
+		return fmt.Errorf("compression level must be between %d and %d, got %d", FastestLevel, BestLevel, opts.Level)
 	}
 
 	// Validate encoder concurrency
-	if input.EncoderConcurrency > uint8(runtime.NumCPU()) {
+	if opts.EncoderConcurrency > uint8(runtime.NumCPU()) {
 		return fmt.Errorf(
-			"encoder concurrency must be between 0 and %d, got %d", runtime.NumCPU(), input.EncoderConcurrency,
+			"encoder concurrency must be between 0 and %d, got %d", runtime.NumCPU(), opts.EncoderConcurrency,
 		)
 	}
 
 	// Validate decoder concurrency
-	if input.DecoderConcurrency > uint8(runtime.NumCPU()) {
+	if opts.DecoderConcurrency > uint8(runtime.NumCPU()) {
 		return fmt.Errorf(
-			"decoder concurrency must be between 0 and %d, got %d", runtime.NumCPU(), input.DecoderConcurrency,
+			"decoder concurrency must be between 0 and %d, got %d", runtime.NumCPU(), opts.DecoderConcurrency,
 		)
 	}
 
