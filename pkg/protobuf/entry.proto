@@ -47,47 +47,34 @@ enum EntryType {
     ENTRY_TYPE_SEGMENT_FINALIZE = 7;
 }
 
-// EntryHeader contains metadata and validation information for each WAL entry.
-// Fixed-size structure that precedes every entry's payload.
-message EntryHeader {
-    // Type of the entry, determining how it should be processed.
-    // See EntryType enum for possible values.
-    EntryType type = 1;
-
-    // Unix timestamp in nanoseconds when the entry was created.
-    // Used for time-based recovery and debugging.
-    int64 timestamp = 2;
-
-    // Size of the entry's payload in bytes.
-    // Used to read variable-length payloads and verify integrity.
-    uint32 payloadSize = 3;
-
+// Contains per-entry metadata to support durability,
+// recovery, and debugging capabilities. This metadata is critical for
+// maintaining log integrity and enabling efficient log operations.
+message PayloadMetadata {
     // Used to detect corruption and ensure data integrity.
-    uint64 checksum = 4;
+    uint64 checksum = 1;
 
     // Offset of the previous entry in the log.
     // Enables backward traversal and helps in recovery.
-    uint64 prevOffset = 5;
+    uint64 prevOffset = 2;
 
-    // Monotonically increasing sequence number.
-    // Ensures proper ordering during recovery and helps detect missing entries.
-    uint64 sequence = 6;
+    // Unix timestamp in nanoseconds when the entry was created.
+    // Used for time-based recovery and debugging.
+    int64 timestamp = 3;
 
-    // Entry format version number.
-    // Allows for future format changes while maintaining backward compatibility.
-    // Using uint32 instead of uint8 for proto3 compatibility.
-    uint32 version = 8;
+    // Type of the entry, determining how it should be processed.
+    // See EntryType enum for possible values.
+    EntryType type = 4;
 }
 
 // Entry represents a complete WAL entry including its header and payload.
 // This is the fundamental unit of storage in the WAL.
 message Entry {
-    // Metadata and validation information for the entry.
-    // Fixed-size structure with fields defined above.
-    EntryHeader header = 1;
+    // Metadata points to additional information about this payload
+	// including timestamps, checksums, and traversal pointers.
+    PayloadMetadata metadata = 1;
 
     // Actual data payload of the entry.
     // Variable-length byte array containing the data to be written.
-    // May be compressed according to the header's compression field.
     bytes payload = 2;
 }
