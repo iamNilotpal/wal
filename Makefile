@@ -8,7 +8,11 @@ run: build
 	@./bin/wal
 
 gen-pb:
-	protoc --go_out=internal/core/domain/proto --go_opt=paths=source_relative pkg/protobuf/entry.proto
+	@protoc \
+  --go_out=internal/core/domain/proto \
+  --go_opt=module=github.com/iamNilotpal/wal \
+  --proto_path=pkg/protobuf \
+  pkg/protobuf/entry.proto
 
 tag:
 	git tag $(TAG)

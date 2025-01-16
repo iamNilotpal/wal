@@ -1,5 +1,12 @@
 package domain
 
+import (
+	"fmt"
+
+	pb "github.com/iamNilotpal/wal/internal/core/domain/proto"
+	"google.golang.org/protobuf/proto"
+)
+
 // EntryType defines the different types of entries that can appear in the WAL.
 // Each type has specific handling requirements during normal operation and recovery.
 type EntryType uint8
@@ -69,10 +76,6 @@ type EntryHeader struct {
 	// Different types may have different handling during recovery.
 	Type EntryType
 
-	// Compression indicates the algorithm used to compress the payload.
-	// 0 means no compression, other values map to specific algorithms.
-	Compression uint8
-
 	// Version indicates the format version of the entry structure.
 	// Allows for future format changes while maintaining backward compatibility.
 	Version uint8
@@ -126,4 +129,45 @@ func (t EntryType) RequiresSync() bool {
 // specific handling during recovery or normal operation.
 func (t EntryType) IsSpecial() bool {
 	return t != EntryNormal
+}
+
+func (e *Entry) MarshalProto() ([]byte, error) {
+	entry := pb.Entry{
+		Payload: e.Payload,
+		Header: &pb.EntryHeader{
+			Version:     uint32(e.Header.Version),
+			Timestamp:   int64(e.Header.Timestamp),
+			Checksum:    uint64(e.Header.Checksum),
+			Sequence:    uint64(e.Header.Sequence),
+			PrevOffset:  uint64(e.Header.PrevOffset),
+			Type:        pb.EntryType(e.Header.Type),
+			PayloadSize: uint32(e.Header.PayloadSize),
+		},
+	}
+
+	data, err := proto.Marshal(&entry)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling proto : %w", err)
+	}
+
+	return data, nil
+}
+
+func (e *Entry) UnMarshalProto(data []byte) error {
+	var entry pb.Entry
+
+	if err := proto.Unmarshal(data, &entry); err != nil {
+		return fmt.Errorf("error unmarshaling proto : %w", err)
+	}
+
+	e.Payload = entry.Payload
+	e.Header.Sequence = entry.Header.Sequence
+	e.Header.Checksum = entry.Header.Checksum
+	e.Header.Timestamp = entry.Header.Timestamp
+	e.Header.Type = EntryType(entry.Header.Type)
+	e.Header.PrevOffset = entry.Header.PrevOffset
+	e.Header.Version = uint8(entry.Header.Version)
+	e.Header.PayloadSize = entry.Header.PayloadSize
+
+	return nil
 }

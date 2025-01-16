@@ -1,9 +1,9 @@
 syntax = "proto3";
 
-package pb;
+package proto;
 
 // Go package path for generated code
-option go_package = "github.com/iamNilotpal/wal/internal/core/domain/protobuf";
+option go_package = "github.com/iamNilotpal/wal;pb";
 
 // EntryType defines the different types of entries that can appear in the WAL.
 // Each type serves a specific purpose in the WAL's operation and recovery process.
@@ -35,6 +35,16 @@ enum EntryType {
     // Used for WAL management, configuration changes, and administrative data.
     // Not part of the user data stream.
     ENTRY_TYPE_METADATA = 5;
+
+   // Segment header entries mark the beginning of a new WAL segment.
+    // Contains initialization data like version, creation timestamp, and segment sequence number.
+    // Required for segment validation and recovery.
+    ENTRY_TYPE_SEGMENT_HEADER = 6;
+
+    // Segment finalize entries mark a segment as complete and ready for archival.
+    // Contains summary information like entry counts and checksums.
+    // Used to verify segment integrity during recovery.
+    ENTRY_TYPE_SEGMENT_FINALIZE = 7;
 }
 
 // EntryHeader contains metadata and validation information for each WAL entry.
@@ -62,11 +72,6 @@ message EntryHeader {
     // Monotonically increasing sequence number.
     // Ensures proper ordering during recovery and helps detect missing entries.
     uint64 sequence = 6;
-
-    // Compression algorithm identifier.
-    // 0 means no compression, other values map to specific algorithms.
-    // Using uint32 instead of uint8 for proto3 compatibility.
-    uint32 compression = 7;
 
     // Entry format version number.
     // Allows for future format changes while maintaining backward compatibility.

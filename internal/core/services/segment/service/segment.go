@@ -325,7 +325,6 @@ func (s *Segment) Finalize() error {
 	entry := domain.Entry{
 		Payload: payload,
 		Header: &domain.EntryHeader{
-			Compression: s.compressor.Level(),
 			Timestamp:   time.Now().UnixNano(),
 			Type:        domain.EntrySegmentFinalize,
 			PayloadSize: uint32(binary.Size(payload)),
