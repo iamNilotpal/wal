@@ -29,6 +29,16 @@ const (
 	// May include configuration changes, cleanup markers, or other
 	// administrative data needed for proper WAL management.
 	EntryMetadata
+
+	// EntrySegmentHeader represents the first entry in a new segment.
+	// Contains critical metadata including creation time, and
+	// validation information required for segment integrity and recovery.
+	EntrySegmentHeader
+
+	// EntrySegmentFinalize indicates the segment has been closed.
+	// Stores final segment state including entry count, size stats, and
+	// integrity checksums required for validation during recovery.
+	EntrySegmentFinalize
 )
 
 // EntryHeader represents the metadata section of a WAL entry.
