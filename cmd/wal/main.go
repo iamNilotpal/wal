@@ -21,6 +21,25 @@ func main() {
 		os.Exit(1)
 	}
 
+	segment, err := wal.CreateSegment()
+	if err != nil {
+		logger.Infow("create segment error", "error", err)
+	}
+
+	println("Segment ID : ", segment.ID())
+	println("Next Log Sequence : ", segment.NextLogSequence())
+
+	info, _ := wal.SegmentInfo()
+	logger.Infow("Segment Info", "info", info)
+
+	wal.SwitchActiveSegment(segment)
+
+	println("Segment ID : ", segment.ID())
+	println("Next Log Sequence : ", segment.NextLogSequence())
+
+	info, _ = segment.Info()
+	logger.Infow("Segment Info", "info", info)
+
 	if err := wal.Close(); err != nil {
 		logger.Infow("error closing wal", "error", err)
 	}
