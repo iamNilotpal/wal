@@ -22,9 +22,6 @@ import (
 )
 
 var (
-	// ErrSegmentNotFound indicates requested segment doesn't exist
-	ErrSegmentNotFound = errors.New("segment not found")
-
 	// ErrSegmentClosed indicates operation on closed segment
 	ErrSegmentClosed = errors.New("segment is closed")
 )
@@ -48,10 +45,11 @@ type Segment struct {
 	writer *bufio.Writer // Buffered writer to optimize write performance.
 
 	// Position tracking for data management and recovery.
-	nextLSN      uint64    // Log Structured Number.
-	createdAt    time.Time // Segment creation time.
-	offset       uint64    // Current position where next write will occur.
-	totalEntries uint64    // TotalEntries tracks cumulative entries including deleted ones.
+	nextLogSequence uint64    // Log Structured Number.
+	createdAt       time.Time // Segment creation time.
+	currOffset      uint64    // Current position where next write will occur.
+	totalEntries    uint64    // TotalEntries tracks cumulative entries including deleted ones.
+	prevOffset      uint64    // Last successfully written data offset, used for recovery and validation.
 
 	// State management flags.
 	closed atomic.Bool // Indicates if segment is closed for writing.
@@ -85,6 +83,9 @@ type SegmentInfo struct {
 	// Current byte offset where next write will occur.
 	// Maintained to append new entries efficiently.
 	CurrentOffset uint64
+
+	// Last successfully written data offset, used for recovery and validation.
+	PrevOffset uint64
 
 	// Next sequence number to be assigned.
 	// Ensures strict ordering of entries within segment.
@@ -124,6 +125,17 @@ type FileMetadata struct {
 	ModTime time.Time
 }
 
+// Record represents a single unit of data in the segment with its associated type.
+// It encapsulates both the raw data (Payload) and metadata about the data (Type).
+type Record struct {
+	// Payload contains the raw binary data to be written.
+	Payload []byte
+
+	// Type indicates the semantic meaning and purpose of this record.
+	// This determines how the Payload should be interpreted and processed.
+	Type domain.EntryType
+}
+
 // NewSegment creates or opens a new log segment with the given ID and options.
 // It performs the following operations:
 //   - Creates/opens segment file with read-write-append permissions.
@@ -143,12 +155,12 @@ type FileMetadata struct {
 func NewSegment(ctx context.Context, id, lsn, total uint64, opts *domain.WALOptions) (*Segment, error) {
 	fs := fs.NewLocalFileSystem()
 	segment := Segment{
-		id:           id,
-		fs:           fs,
-		nextLSN:      lsn,
-		opts:         opts,
-		totalEntries: total,
-		createdAt:    time.Now(),
+		id:              id,
+		fs:              fs,
+		nextLogSequence: lsn,
+		opts:            opts,
+		totalEntries:    total,
+		createdAt:       time.Now(),
 	}
 
 	// Generate segment file path
@@ -182,7 +194,7 @@ func NewSegment(ctx context.Context, id, lsn, total uint64, opts *domain.WALOpti
 
 		size = 0
 		segment.id++
-		segment.nextLSN = 0
+		segment.nextLogSequence = 0
 		segment.totalEntries = 0
 
 		fileName = segment.generateName()
@@ -255,12 +267,16 @@ func (s *Segment) ID() uint64 {
 
 // Returns the next available log sequence number (LSN).
 func (s *Segment) NextLogSequence() uint64 {
-	return s.nextLSN
+	return s.nextLogSequence
 }
 
 // Returns metadata about this segment including file information and segment-specific details.
 // It combines both filesystem metadata and segment-specific tracking information.
 func (s *Segment) Info() (*SegmentInfo, error) {
+	if s.closed.Load() {
+		return nil, ErrSegmentClosed
+	}
+
 	stat, err := s.file.Stat()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load file stats : %w", err)
@@ -278,26 +294,166 @@ func (s *Segment) Info() (*SegmentInfo, error) {
 		FileMetadata:   info,
 		SegmentId:      s.id,
 		FilePath:       s.path,
-		CurrentOffset:  s.offset,
-		NextSequenceId: s.nextLSN,
 		Size:           stat.Size(),
 		CreatedAt:      s.createdAt,
+		CurrentOffset:  s.currOffset,
+		PrevOffset:     s.prevOffset,
 		Entries:        s.totalEntries,
+		NextSequenceId: s.nextLogSequence,
 	}, nil
 }
 
-func (s *Segment) Write(context context.Context, entry *domain.Entry) error {
+// Write appends a new entry to the segment with proper synchronization, checksum,
+// and compression. It enforces data integrity through checksums and supports optional
+// disk syncing based on configuration. Forces immediate disk sync when true,
+// overrides SyncOnWrite config.
+func (s *Segment) Write(context context.Context, payload *Record, sync bool) error {
+	if s.closed.Load() {
+		return ErrSegmentClosed
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Initialize new entry with sequence number and metadata from payload.
+	entry := domain.Entry{
+		Header: &domain.EntryHeader{Sequence: s.nextLogSequence, Version: 0},
+		Payload: &domain.EntryPayload{
+			Payload: payload.Payload,
+			Metadata: &domain.PayloadMetadata{
+				PrevOffset: s.prevOffset,
+				Type:       payload.Type,
+				Timestamp:  time.Now().UnixNano(),
+			},
+		},
+	}
+
+	// First Proto marshalling before checksum calculation.
+	encoded, err := entry.MarshalProto()
+	if err != nil {
+		return fmt.Errorf("failed to write entry : %w", err)
+	}
+
+	// Checksum is calculated only for the initial entry structure before any encoding or compression.
+	// This includes:
+	// - Header with sequence number and version.
+	// - Raw payload data.
+	// - Metadata (PrevOffset, Type, Timestamp).
+	if s.opts.ChecksumOptions.Enable {
+		var buffer bytes.Buffer
+		if err := binary.Write(&buffer, binary.LittleEndian, entry); err != nil {
+			return fmt.Errorf("failed to write buffer entry : %w", err)
+		}
+
+		entry.Payload.Metadata.Checksum = s.checksum.Calculate(buffer.Bytes())
+
+		// Re-marshal after checksum update to include it in the final encoding.
+		encoded, err = entry.MarshalProto()
+		if err != nil {
+			return fmt.Errorf("failed to write entry : %w", err)
+		}
+	}
+
+	// Apply compression if enabled.
+	if s.opts.CompressionOptions.Enable {
+		compressed, err := s.compressor.Compress(encoded)
+		if err != nil {
+			return fmt.Errorf("failed to compress entry : %w", err)
+		}
+
+		encoded = compressed
+	}
+
+	// Set final payload size after all transformations (compression, encoding).
+	entry.Header.PayloadSize = uint32(binary.Size(encoded))
+	entrySize := binary.Size(encoded) + binary.Size(entry.Header)
+
+	// Check if writing this entry would exceed segment size limit.
+	if entrySize > int(s.opts.SegmentOptions.MaxSegmentSize) {
+		s, err = s.Rotate() // Create new segment if size limit reached.
+		if err != nil {
+			return fmt.Errorf("error rotating segment : %w", err)
+		}
+	}
+
+	// Write header separately from payload for better format versioning support.
+	if err := binary.Write(s.writer, binary.LittleEndian, entry.Header); err != nil {
+		return fmt.Errorf("failed to write entry header : %w", err)
+	}
+
+	// Ensure complete write of encoded payload.
+	// Verify complete payload write to protect against partial writes.
+	if nn, err := s.writer.Write(encoded); err != nil {
+		return fmt.Errorf("failed to write entry : %w", err)
+	} else if nn != len(encoded) {
+		return fmt.Errorf("short write: %d != %d", nn, len(encoded))
+	}
+
+	// Update segment metadata after successful write.
 	s.totalEntries++
+	s.nextLogSequence++
+	s.prevOffset = s.currOffset
+	s.currOffset += uint64(entrySize)
+
+	// Sync to disk if explicitly requested or globally configured.
+	if sync || s.opts.SyncOnWrite {
+		if err := s.writer.Flush(); err != nil {
+			return fmt.Errorf("failed to flush buffer : %w", err)
+		}
+
+		if err := s.file.Sync(); err != nil {
+			return fmt.Errorf("failed to sync file : %w", err)
+		}
+	}
+
 	return nil
+}
+
+// Rotate performs a safe transition from the current segment to a new one.
+// It ensures data consistency by following these steps:
+//   - 1. Locks the current segment to prevent concurrent access.
+//   - 2. Writes a special rotation record to mark the transition.
+//   - 3. Safely closes the current segment.
+//   - 4. Creates and returns a new segment.
+func (s *Segment) Rotate() (*Segment, error) {
+	if s.closed.Load() {
+		return nil, ErrSegmentClosed
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Create a rotation record with the current segment's ID
+	// This serves as a marker in the log to indicate where rotation occurred.
+	payload := []byte(fmt.Sprintf("rotate-%d", s.id))
+	entry := Record{Payload: payload, Type: domain.EntryRotation}
+
+	// Write the rotation record to the current segment.
+	// sync=false since we'll be closing the segment immediately after.
+	if err := s.Write(s.ctx, &entry, false); err != nil {
+		return nil, fmt.Errorf("failed to write rotation entry : %w", err)
+	}
+
+	if err := s.Close(); err != nil {
+		return nil, err
+	}
+
+	segment, err := NewSegment(s.ctx, s.id+1, 0, 0, s.opts)
+	if err != nil {
+		return nil, err
+	}
+
+	return segment, nil
 }
 
 // Flush ensures that all buffered data is written to disk.
 // If sync is true, forces an fsync to ensure data is persisted to disk.
 // Returns error if any write, flush or sync operations fail.
 func (s *Segment) Flush(sync bool) error {
+	if s.closed.Load() {
+		return ErrSegmentClosed
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -307,7 +463,7 @@ func (s *Segment) Flush(sync bool) error {
 
 	if sync || s.opts.SyncOnFlush {
 		if err := s.file.Sync(); err != nil {
-			return fmt.Errorf("failed to sync : %w", err)
+			return fmt.Errorf("failed to sync file : %w", err)
 		}
 	}
 
@@ -321,29 +477,15 @@ func (s *Segment) Flush(sync bool) error {
 //
 // Returns an error if either writing the final entry or flushing fails.
 func (s *Segment) Finalize() error {
-	payload := []byte("Final Entry")
-	entry := domain.Entry{
-		Payload: payload,
-		Header: &domain.EntryHeader{
-			Timestamp:   time.Now().UnixNano(),
-			Type:        domain.EntrySegmentFinalize,
-			PayloadSize: uint32(binary.Size(payload)),
-		},
+	if s.closed.Load() {
+		return ErrSegmentClosed
 	}
 
-	var buffer bytes.Buffer
-	if err := binary.Write(&buffer, binary.BigEndian, entry); err != nil {
+	payload := []byte("final entry")
+	entry := Record{Payload: payload, Type: domain.EntrySegmentFinalize}
+
+	if err := s.Write(s.ctx, &entry, true); err != nil {
 		return fmt.Errorf("failed to write final entry : %w", err)
-	}
-
-	entry.Header.Checksum = s.checksum.Calculate(buffer.Bytes())
-
-	if err := s.Write(s.ctx, &entry); err != nil {
-		return fmt.Errorf("failed to write final entry : %w", err)
-	}
-
-	if err := s.Flush(true); err != nil {
-		return fmt.Errorf("failed to flush final entry : %w", err)
 	}
 
 	return nil
@@ -360,8 +502,8 @@ func (s *Segment) Close() error {
 		return ErrSegmentClosed
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.flushMu.Lock()
+	defer s.flushMu.Unlock()
 
 	s.cancel()
 	s.wg.Wait()
@@ -397,24 +539,8 @@ func (s *Segment) Close() error {
 // An error is returned if writing the header entry fails.
 func (s *Segment) writeEntryHeader() error {
 	payload := []byte(fmt.Sprintf("segment-%d", s.id))
-
-	header := domain.Entry{
-		Payload: payload,
-		Header: &domain.EntryHeader{
-			Sequence:    s.nextLSN,
-			Timestamp:   time.Now().UnixNano(),
-			Type:        domain.EntrySegmentHeader,
-			PayloadSize: uint32(binary.Size(payload)),
-		},
-	}
-
-	var buffer bytes.Buffer
-	if err := binary.Write(&buffer, binary.BigEndian, header); err != nil {
-		return fmt.Errorf("failed to write header entry : %w", err)
-	}
-
-	header.Header.Checksum = s.checksum.Calculate(buffer.Bytes())
-	return s.Write(s.ctx, &header)
+	entry := Record{Payload: payload, Type: domain.EntrySegmentHeader}
+	return s.Write(s.ctx, &entry, true)
 }
 
 // Creates a segment filename by combining the configured prefix

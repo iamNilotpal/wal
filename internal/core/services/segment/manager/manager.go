@@ -92,12 +92,30 @@ func NewSegmentManager(ctx context.Context, opts *domain.WALOptions) (*SegmentMa
 	return &sm, nil
 }
 
-func (sm *SegmentManager) Write(context context.Context, data []byte) error {
-	return sm.segment.Write(context, nil)
+// Write creates a new record with the provided data and writes it to the current segment.
+// It wraps the raw data in a Record structure with a normal entry type before writing.
+func (sm *SegmentManager) Write(context context.Context, data []byte, sync bool) error {
+	entry := segment.Record{Payload: data, Type: domain.EntryNormal}
+	return sm.segment.Write(context, &entry, sync)
 }
 
+// Flush ensures all buffered data in the current segment is written to stable storage.
 func (sm *SegmentManager) Flush(sync bool) error {
 	return sm.segment.Flush(sync)
+}
+
+// Rotate performs a safe transition from the current segment to a new one.
+func (sm *SegmentManager) Rotate() error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	segment, err := sm.segment.Rotate()
+	if err != nil {
+		return err
+	}
+
+	sm.segment = segment
+	return nil
 }
 
 // Returns information about the currently active segment.
@@ -144,49 +162,6 @@ func (sm *SegmentManager) SwitchActiveSegment(segment *segment.Segment) error {
 
 	sm.segment = segment
 	return nil
-}
-
-// Rotate performs a safe transition from the current segment to a new one.
-//
-// The rotation process ensures:
-//   - No entries are lost during transition
-//   - Sequence numbers remain continuous across segments
-//   - Clear markers exist for segment boundaries
-//   - Proper cleanup of resources
-//
-// Returns error if any step fails:
-//   - Writing rotation entry fails
-//   - Finalizing current segment fails
-//   - Closing current segment fails
-//   - Creating new segment fails
-//
-// The new segment becomes active only if all steps succeed.
-func (sm *SegmentManager) Rotate() error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	id := sm.segment.ID()
-	lsn := sm.segment.NextLogSequence()
-
-	entry := &domain.Entry{
-		Payload: []byte(fmt.Sprintf("rotate-%d", id)),
-		Header: &domain.EntryHeader{
-			Sequence:  lsn,
-			Type:      domain.EntryRotation,
-			Timestamp: time.Now().UnixNano(),
-		},
-	}
-
-	if err := sm.segment.Write(sm.ctx, entry); err != nil {
-		return fmt.Errorf("failed to write rotation entry : %w", err)
-	}
-
-	newSeg, err := sm.CreateSegment()
-	if err != nil {
-		return err
-	}
-
-	return sm.SwitchActiveSegment(newSeg)
 }
 
 // Performs a clean shutdown of the SegmentManager.

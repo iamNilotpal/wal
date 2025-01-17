@@ -57,15 +57,15 @@ func New(opts *domain.WALOptions) (*WAL, error) {
 	}, nil
 }
 
-// Creates a new segment which is a single file where WAL entries could be written.
-func (wal *WAL) CreateSegment() (*segment.Segment, error) {
-	return wal.sm.CreateSegment()
-}
-
-// Switches the target segment for new writes. This allows external control over which
-// segment receives entries, enabling operations like log compaction and segment retirement.
-func (wal *WAL) SwitchActiveSegment(segment *segment.Segment) error {
-	return wal.sm.SwitchActiveSegment(segment)
+// Writes an entry containing the provided data bytes to the active segment. The context
+// allows cancellation of long-running writes. Each write is atomic and sequential,
+// maintaining the WAL's ordering guarantees.
+//
+// It syncs to disk if either:
+//   - sync parameter is true.
+//   - sync is false but SyncOnWrite is true.
+func (wal *WAL) Write(context context.Context, data []byte, sync bool) error {
+	return wal.sm.Write(context, data, sync)
 }
 
 // Rotates to a new segment when the current one reaches capacity. This prevents any single
@@ -75,17 +75,24 @@ func (wal *WAL) Rotate() error {
 }
 
 // Ensures durability of written entries by flushing buffers to disk. The sync flag controls
-// whether to force an fsync() - true provides stronger durability guarantees at the cost
-// of performance, while false is faster but risks data loss on system crash.
+// whether to force a file sync.
+//
+// It syncs to disk if either:
+//   - sync parameter is true.
+//   - sync is false but SyncOnFlush is true.
 func (wal *WAL) Flush(sync bool) error {
 	return wal.sm.Flush(sync)
 }
 
-// Writes an entry containing the provided data bytes to the active segment. The context
-// allows cancellation of long-running writes. Each write is atomic and sequential,
-// maintaining the WAL's ordering guarantees.
-func (wal *WAL) Write(context context.Context, data []byte) error {
-	return wal.sm.Write(context, data)
+// Creates a new segment which is a single file where WAL entries could be written.
+func (wal *WAL) CreateSegment() (*segment.Segment, error) {
+	return wal.sm.CreateSegment()
+}
+
+// Switches the target segment for new writes. This allows external control over which
+// segment receives entries, enabling operations like log compaction and segment retirement.
+func (wal *WAL) SwitchActiveSegment(segment *segment.Segment) error {
+	return wal.sm.SwitchActiveSegment(segment)
 }
 
 // Retrieves metadata about the active segment including its current size, number of entries,
