@@ -652,17 +652,20 @@ func (s *Segment) compressEntry(data []byte) ([]byte, error) {
 
 // Writes the initial metadata entry at sequence 0 that identifies this segment.
 //   - Sequence number 0 (reserved for segment header)
-//   - EntryMetadata type to distinguish from data entries
+//   - EntrySegmentHeader type to distinguish from data entries
 //
 // This header entry allows readers to:
-//  1. Verify they are reading a valid segment file.
-//  2. Track when the segment was created.
-//  3. Match the segment file to its logical ID.
+//   - Verify they are reading a valid segment file.
+//   - Track when the segment was created.
+//   - Match the segment file to its logical ID.
 //
 // An error is returned if writing the header entry fails.
 func (s *Segment) writeEntryHeader() error {
-	payload := []byte(fmt.Sprintf("segment-%d", s.id))
-	entry := Record{Payload: payload, Type: domain.EntrySegmentHeader}
+	buffer := s.bufferPool.Get()
+	defer s.bufferPool.Put(buffer)
+
+	buffer.WriteString(fmt.Sprintf("segment-%d", s.id))
+	entry := Record{Payload: buffer.Bytes(), Type: domain.EntrySegmentHeader}
 	return s.Write(s.ctx, &entry, true)
 }
 
