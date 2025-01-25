@@ -70,8 +70,8 @@ func (wal *WAL) Write(context context.Context, data []byte, sync bool) error {
 
 // Rotates to a new segment when the current one reaches capacity. This prevents any single
 // segment from growing too large while maintaining write availability.
-func (wal *WAL) Rotate() error {
-	return wal.sm.Rotate()
+func (wal *WAL) Rotate(context context.Context) error {
+	return wal.sm.Rotate(context)
 }
 
 // Ensures durability of written entries by flushing buffers to disk. The sync flag controls
@@ -80,19 +80,19 @@ func (wal *WAL) Rotate() error {
 // It syncs to disk if either:
 //   - sync parameter is true.
 //   - sync is false but SyncOnFlush is true.
-func (wal *WAL) Flush(sync bool) error {
-	return wal.sm.Flush(sync)
+func (wal *WAL) Flush(context context.Context, sync bool) error {
+	return wal.sm.Flush(context, sync)
 }
 
 // Creates a new segment which is a single file where WAL entries could be written.
-func (wal *WAL) CreateSegment() (*segment.Segment, error) {
-	return wal.sm.CreateSegment()
+func (wal *WAL) CreateSegment(context context.Context) (*segment.Segment, error) {
+	return wal.sm.CreateSegment(context)
 }
 
 // Switches the target segment for new writes. This allows external control over which
 // segment receives entries, enabling operations like log compaction and segment retirement.
-func (wal *WAL) SwitchActiveSegment(segment *segment.Segment) error {
-	return wal.sm.SwitchActiveSegment(segment)
+func (wal *WAL) SwitchActiveSegment(context context.Context, segment *segment.Segment) error {
+	return wal.sm.SwitchActiveSegment(context, segment)
 }
 
 // Retrieves metadata about the active segment including its current size, number of entries,
@@ -104,7 +104,7 @@ func (wal *WAL) SegmentInfo() (*segment.SegmentInfo, error) {
 
 // Gracefully shuts down the WAL by cancelling ongoing operations and ensuring all segments
 // are properly closed and synced to disk. This prevents data corruption from improper shutdown.
-func (wal *WAL) Close() error {
+func (wal *WAL) Close(context context.Context) error {
 	wal.cancel()
-	return wal.sm.Close()
+	return wal.sm.Close(context)
 }

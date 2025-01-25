@@ -68,26 +68,42 @@ func NewSegmentManager(ctx context.Context, opts *domain.WALOptions) (*SegmentMa
 		compactTicker: time.NewTicker(opts.CompactInterval),
 	}
 
+	// Ensure segment directory exists with proper permissions (0755)
+	// Directory is created recursively if it doesn't exist.
 	path := filepath.Join(opts.Directory, opts.SegmentOptions.SegmentDirectory)
 	if err := sm.fs.CreateDir(path, 0755, true); err != nil {
 		return nil, err
 	}
 
+	// Find the highest segment ID from existing segment files
+	// This ensures we continue from the last valid segment.
 	segmentId, err := sm.getLatestSegmentId()
 	if err != nil {
 		cancel()
 		return nil, err
 	}
 
+	// Scan the latest segment to determine the next sequence ID
+	// and total number of entries for continuity.
 	sequenceId, totalEntries, err := sm.scanSegmentMetadata(segmentId)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
 
+	// Either load existing segment or create new one based on discovered metadata.
 	if err := sm.loadOrCreateSegment(segmentId, sequenceId, totalEntries); err != nil {
 		return nil, err
 	}
+
+	// Registers a callback on the active segment to maintain segment
+	// references when rotation occurs. This ensures the SegmentManager
+	// always points to the most recent active segment.
+	sm.segment.RegisterRotationHandler(func(segment *segment.Segment) {
+		sm.mu.Lock()
+		sm.segment = segment
+		sm.mu.Unlock()
+	})
 
 	return &sm, nil
 }
@@ -100,16 +116,16 @@ func (sm *SegmentManager) Write(context context.Context, data []byte, sync bool)
 }
 
 // Flush ensures all buffered data in the current segment is written to stable storage.
-func (sm *SegmentManager) Flush(sync bool) error {
-	return sm.segment.Flush(sync)
+func (sm *SegmentManager) Flush(context context.Context, sync bool) error {
+	return sm.segment.Flush(context, sync)
 }
 
 // Rotate performs a safe transition from the current segment to a new one.
-func (sm *SegmentManager) Rotate() error {
+func (sm *SegmentManager) Rotate(context context.Context) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	segment, err := sm.segment.Rotate()
+	segment, err := sm.segment.Rotate(context)
 	if err != nil {
 		return err
 	}
@@ -126,12 +142,15 @@ func (sm *SegmentManager) SegmentInfo() (*segment.SegmentInfo, error) {
 // Creates a new segment for writing.
 //   - Generates new segment ID by incrementing current
 //   - Initializes new segment with zero entries
-func (sm *SegmentManager) CreateSegment() (*segment.Segment, error) {
+func (sm *SegmentManager) CreateSegment(context context.Context) (*segment.Segment, error) {
 	sm.mu.Lock()
 	id := sm.segment.ID() + 1
 	sm.mu.Unlock()
 
-	newSeg, err := segment.NewSegment(sm.ctx, id, 0, 0, sm.opts)
+	newSeg, err := segment.NewSegment(
+		context,
+		&segment.Config{NextLogSequence: 0, TotalSizeInBytes: 0, SegmentId: id, Options: sm.opts},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -148,15 +167,15 @@ func (sm *SegmentManager) CreateSegment() (*segment.Segment, error) {
 //   - Current segment finalization fails
 //   - Current segment closure fails
 //   - Any file system operations fail
-func (sm *SegmentManager) SwitchActiveSegment(segment *segment.Segment) error {
+func (sm *SegmentManager) SwitchActiveSegment(context context.Context, segment *segment.Segment) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	if err := sm.segment.Finalize(); err != nil {
+	if err := sm.segment.Finalize(context); err != nil {
 		return fmt.Errorf("failed to finalize active segment : %w", err)
 	}
 
-	if err := sm.segment.Close(); err != nil {
+	if err := sm.segment.Close(context); err != nil {
 		return fmt.Errorf("failed to close active segment : %w", err)
 	}
 
@@ -165,7 +184,7 @@ func (sm *SegmentManager) SwitchActiveSegment(segment *segment.Segment) error {
 }
 
 // Performs a clean shutdown of the SegmentManager.
-func (sm *SegmentManager) Close() error {
+func (sm *SegmentManager) Close(context context.Context) error {
 	sm.cancel()
 	sm.wg.Wait()
 
@@ -175,7 +194,7 @@ func (sm *SegmentManager) Close() error {
 	sm.cleanupTicker.Stop()
 	sm.compactTicker.Stop()
 
-	return sm.segment.Close()
+	return sm.segment.Close(context)
 }
 
 // Scans the segment directory to determine the highest segment ID currently in use.
@@ -258,7 +277,10 @@ func (sm *SegmentManager) scanSegmentMetadata(id uint64) (uint64, uint64, error)
 //
 // Returns an error if segment creation fails.
 func (sm *SegmentManager) loadOrCreateSegment(id, lsn, total uint64) error {
-	segment, err := segment.NewSegment(sm.ctx, id, lsn, total, sm.opts)
+	segment, err := segment.NewSegment(
+		context.Background(),
+		&segment.Config{SegmentId: id, NextLogSequence: lsn, TotalSizeInBytes: total, Options: sm.opts},
+	)
 	if err != nil {
 		return err
 	}

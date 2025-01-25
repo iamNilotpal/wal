@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 
 	"github.com/iamNilotpal/wal/internal/core/domain"
@@ -12,7 +13,7 @@ func main() {
 	logger := logger.New("wal-service")
 	defer logger.Sync()
 
-	logger.Info("Starting wal service")
+	logger.Info("starting wal service")
 
 	wal, err := wal.New(&domain.WALOptions{})
 	if err != nil {
@@ -21,26 +22,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	segment, err := wal.CreateSegment()
-	if err != nil {
-		logger.Infow("create segment error", "error", err)
-	}
-
-	println("Segment ID : ", segment.ID())
-	println("Next Log Sequence : ", segment.NextLogSequence())
-
-	info, _ := wal.SegmentInfo()
-	logger.Infow("Segment Info", "info", info)
-
-	wal.SwitchActiveSegment(segment)
-
-	println("Segment ID : ", segment.ID())
-	println("Next Log Sequence : ", segment.NextLogSequence())
-
-	info, _ = segment.Info()
-	logger.Infow("Segment Info", "info", info)
-
-	if err := wal.Close(); err != nil {
+	if err := wal.Close(context.Background()); err != nil {
 		logger.Infow("error closing wal", "error", err)
 	}
 }
