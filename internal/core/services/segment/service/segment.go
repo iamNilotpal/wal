@@ -569,6 +569,87 @@ func (s *Segment) Close(context context.Context) error {
 	return nil
 }
 
+// Transforms a raw Record into a structured Entry ready for storage.
+//
+// The preparation follows a specific sequence:
+//   - Constructs a new Entry with current sequence and metadata
+//   - Serializes the Entry to bytes using protocol buffers
+//   - If enabled, calculates and sets checksum for data integrity
+//   - If enabled, compresses the encoded data to reduce storage size
+//   - Sets the final payload size in the entry header
+//
+// Returns:
+//   - *domain.Entry: The prepared Entry structure with all metadata
+//   - []byte: The final encoded bytes ready for storage
+//   - error: Any error encountered during preparation
+func (s *Segment) prepareEntry(record *Record) (*domain.Entry, []byte, error) {
+	// Create a new Entry structure with metadata.
+	entry := &domain.Entry{
+		Header: &domain.EntryHeader{Version: 0, Sequence: s.nextLogSequence},
+		Payload: &domain.EntryPayload{
+			Payload: record.Payload,
+			Metadata: &domain.PayloadMetadata{
+				Type:       record.Type,
+				PrevOffset: s.currOffset,
+				Timestamp:  time.Now().UnixNano(),
+			},
+		},
+	}
+
+	// First serialization to get the base encoded form.
+	encoded, err := entry.MarshalProto()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Optional checksum calculation for data integrity.
+	if s.options.ChecksumOptions.Enable {
+		s.setChecksum(entry, encoded)
+
+		// Re-encode after setting checksum to include it in the final bytes.
+		encoded, err = entry.MarshalProto()
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	// Optional compression to reduce storage size.
+	if s.options.CompressionOptions.Enable {
+		encoded, err = s.compressEntry(encoded)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	// Set the final size after all transformations.
+	entry.Header.PayloadSize = uint32(len(encoded))
+	return entry, encoded, nil
+}
+
+// Calculates and sets the checksum for an entry's data.
+// This method updates the entry's metadata with a checksum value
+// calculated from the provided data bytes. The checksum provides
+// data integrity verification for stored entries.
+func (s *Segment) setChecksum(entry *domain.Entry, data []byte) {
+	checksum := s.checksum.Calculate(data)
+	entry.Payload.Metadata.Checksum = checksum
+}
+
+// Compresses the provided data bytes using the segment's
+// configured compression algorithm. This method is used to reduce the
+// storage size of entries when compression is enabled.
+//
+// Returns:
+//   - []byte: The compressed data.
+//   - error: Any error encountered during compression.
+func (s *Segment) compressEntry(data []byte) ([]byte, error) {
+	compressed, err := s.compressor.Compress(data)
+	if err != nil {
+		return nil, err
+	}
+	return compressed, err
+}
+
 // Writes the initial metadata entry at sequence 0 that identifies this segment.
 //   - Sequence number 0 (reserved for segment header)
 //   - EntryMetadata type to distinguish from data entries
