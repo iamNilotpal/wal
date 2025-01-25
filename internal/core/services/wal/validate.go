@@ -83,12 +83,12 @@ func Validate(opts *domain.WALOptions) error {
 
 func validateBufferSize(size uint32) error {
 	// Check minimum size
-	if size < DefaultMinBufferSize {
+	if size < MinBufferSize {
 		return fmt.Errorf("buffer size must be at least 4KB (4096 bytes), got %d bytes", size)
 	}
 
 	// Check maximum size
-	if size > DefaultMaxBufferSize {
+	if size > MaxBufferSize {
 		return fmt.Errorf("buffer size must not exceed 16MB (16777216 bytes), got %d bytes", size)
 	}
 

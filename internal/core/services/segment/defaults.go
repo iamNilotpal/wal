@@ -7,12 +7,15 @@ import (
 )
 
 const (
-	DefaultSegmentPrefix    = "segment-"
-	DefaultSegmentDirectory = "/segments"
+	SegmentPrefix    = "segment-"
+	SegmentDirectory = "/segments"
 
-	DefaultMaxSegmentAge  = time.Duration(time.Hour * 24) // 24h
-	DefaultMinSegmentSize = 1048576                       // 1MB
-	DefaultMaxSegmentSize = 67108864                      // 64MB
+	MaxSegmentAge  = time.Duration(time.Hour * 24) // 24h
+	MinSegmentSize = 1048576                       // 1MB
+	MaxSegmentSize = 67108864                      // 64MB
+
+	MinBufferAvailablePercent = 25
+	FlushTimeout              = 5 * time.Second
 )
 
 // DefaultOptions returns a SegmentOptions struct with recommended defaults.
@@ -20,10 +23,10 @@ const (
 // durability, and resource usage for typical use cases.
 func DefaultOptions() *domain.SegmentOptions {
 	return &domain.SegmentOptions{
-		MaxSegmentAge:    DefaultMaxSegmentAge,
-		SegmentPrefix:    DefaultSegmentPrefix,
-		MinSegmentSize:   DefaultMinSegmentSize,
-		MaxSegmentSize:   DefaultMaxSegmentSize,
-		SegmentDirectory: DefaultSegmentDirectory,
+		MaxSegmentAge:    MaxSegmentAge,
+		SegmentPrefix:    SegmentPrefix,
+		MinSegmentSize:   MinSegmentSize,
+		MaxSegmentSize:   MaxSegmentSize,
+		SegmentDirectory: SegmentDirectory,
 	}
 }

@@ -1,6 +1,7 @@
 package wal
 
 import (
+	"runtime"
 	"strings"
 	"time"
 
@@ -11,12 +12,13 @@ import (
 )
 
 const (
-	DefaultMinSegmentsKept = 2
-	DefaultMaxSegmentsKept = 10
-	DefaultDirectory       = "./logs"
+	MinSegmentsKept = 2
+	MaxSegmentsKept = 10
+	Directory       = "./logs"
 
-	DefaultMinBufferSize = 4096     // 4KB
-	DefaultMaxBufferSize = 16777216 // 16MB
+	MinBufferSize     = 4096     // 4KB
+	DefaultBufferSize = 1048576  // 1MB
+	MaxBufferSize     = 16777216 // 16MB
 
 	DefaultFlushInterval   = time.Duration(time.Second * 5)  // 5s
 	DefaultCompactInterval = time.Duration(time.Hour * 1)    // 1h
@@ -24,12 +26,12 @@ const (
 )
 
 func prepareDefaults(opts *domain.WALOptions) *domain.WALOptions {
-	if opts.BufferSize < DefaultMinBufferSize {
-		opts.BufferSize = DefaultMinBufferSize
+	if opts.BufferSize == 0 || opts.BufferSize < MinBufferSize {
+		opts.BufferSize = DefaultBufferSize
 	}
 
-	if opts.BufferSize > DefaultMaxBufferSize {
-		opts.BufferSize = DefaultMaxBufferSize
+	if opts.BufferSize > MaxBufferSize {
+		opts.BufferSize = MaxBufferSize
 	}
 
 	if opts.CleanupInterval == 0 {
@@ -45,39 +47,54 @@ func prepareDefaults(opts *domain.WALOptions) *domain.WALOptions {
 	}
 
 	if opts.MaxSegmentsKept == 0 {
-		opts.MaxSegmentsKept = DefaultMaxSegmentsKept
+		opts.MaxSegmentsKept = MaxSegmentsKept
 	}
 
 	if opts.MinSegmentsKept == 0 {
-		opts.MinSegmentsKept = DefaultMinSegmentsKept
+		opts.MinSegmentsKept = MinSegmentsKept
 	}
 
 	if opts.RetentionDays == 0 {
-		opts.MinSegmentsKept = DefaultMinSegmentsKept
+		opts.MinSegmentsKept = MinSegmentsKept
 	}
 
 	if strings.TrimSpace(opts.Directory) == "" {
-		opts.Directory = DefaultDirectory
+		opts.Directory = Directory
 	}
 
 	if opts.SegmentOptions == nil {
 		opts.SegmentOptions = segment.DefaultOptions()
 	} else {
 		if strings.TrimSpace(opts.SegmentOptions.SegmentDirectory) == "" {
-			opts.SegmentOptions.SegmentDirectory = segment.DefaultSegmentDirectory
+			opts.SegmentOptions.SegmentDirectory = segment.SegmentDirectory
 		}
 
 		if strings.TrimSpace(opts.SegmentOptions.SegmentPrefix) == "" {
-			opts.SegmentOptions.SegmentPrefix = segment.DefaultSegmentPrefix
+			opts.SegmentOptions.SegmentPrefix = segment.SegmentPrefix
 		}
 	}
 
 	if opts.ChecksumOptions == nil {
 		opts.ChecksumOptions = checksum.DefaultOptions()
+	} else {
+		opts.ChecksumOptions.Enable = true
+		if strings.TrimSpace(string(opts.ChecksumOptions.Algorithm)) == "" {
+			opts.ChecksumOptions.Algorithm = checksum.CRC32IEEE
+		}
 	}
 
 	if opts.CompressionOptions == nil {
 		opts.CompressionOptions = compression.DefaultOptions()
+	} else {
+		opts.CompressionOptions.Enable = true
+
+		if opts.CompressionOptions.DecoderConcurrency == 0 {
+			opts.CompressionOptions.DecoderConcurrency = uint8(runtime.NumCPU())
+		}
+
+		if opts.CompressionOptions.EncoderConcurrency == 0 {
+			opts.CompressionOptions.EncoderConcurrency = uint8(runtime.NumCPU())
+		}
 	}
 
 	return opts

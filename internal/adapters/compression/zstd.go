@@ -89,7 +89,6 @@ func (z *ZstdCompression) Compress(data []byte) ([]byte, error) {
 	}
 
 	compressed := z.encoder.EncodeAll(data, nil)
-
 	if len(compressed) < len(data) {
 		return compressed, nil
 	}

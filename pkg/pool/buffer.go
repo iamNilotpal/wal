@@ -37,5 +37,6 @@ func (bp *BufferPool) Put(buf *bytes.Buffer) {
 		return
 	}
 
+	buf.Reset()
 	bp.pool.Put(buf)
 }
