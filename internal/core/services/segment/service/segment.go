@@ -19,6 +19,7 @@ import (
 	"github.com/iamNilotpal/wal/internal/adapters/fs"
 	"github.com/iamNilotpal/wal/internal/core/domain"
 	"github.com/iamNilotpal/wal/internal/core/ports"
+	"github.com/iamNilotpal/wal/pkg/pool"
 )
 
 var (
@@ -31,7 +32,7 @@ var (
 type Segment struct {
 	// Configuration options for the WAL system, including segment behavior,
 	// compression settings, and checksum parameters.
-	opts *domain.WALOptions
+	options *domain.WALOptions
 
 	// Interfaces for data integrity and compression operations.
 	fs         ports.FileSystemPort  // Handles File System operations.
@@ -39,17 +40,22 @@ type Segment struct {
 	compressor ports.CompressionPort // Handles data compression/decompression.
 
 	// Core segment properties
-	id     uint64        // Unique monotonically increasing identifier for the segment.
-	path   string        // Absolute file path where segment data is stored.
-	file   *os.File      // Operating system file handle for I/O operations.
-	writer *bufio.Writer // Buffered writer to optimize write performance.
+	id         uint64           // Unique monotonically increasing identifier for the segment.
+	path       string           // Absolute file path where segment data is stored.
+	file       *os.File         // Operating system file handle for I/O operations.
+	writer     *bufio.Writer    // Buffered writer to optimize write performance.
+	bufferPool *pool.BufferPool // Buffer pool for better memory management.
 
 	// Position tracking for data management and recovery.
+	size            uint32    // Total segment size.
 	nextLogSequence uint64    // Log Structured Number.
 	createdAt       time.Time // Segment creation time.
 	currOffset      uint64    // Current position where next write will occur.
 	totalEntries    uint64    // TotalEntries tracks cumulative entries including deleted ones.
 	prevOffset      uint64    // Last successfully written data offset, used for recovery and validation.
+
+	// Rotation handling
+	onRotate func(segment *Segment) // Callback function invoked when segment rotation occurs.
 
 	// State management flags.
 	closed atomic.Bool // Indicates if segment is closed for writing.
@@ -136,6 +142,22 @@ type Record struct {
 	Type domain.EntryType
 }
 
+// Config holds the configuration parameters for creating a new segment.
+type Config struct {
+	// SegmentId is the unique identifier for this segment.
+	// Each segment in a WAL must have a unique, monotonically increasing ID.
+	SegmentId uint64
+
+	// NextLogSequence represents the next available sequence number for log entries.
+	NextLogSequence uint64
+
+	// TotalSizeInBytes represents the current total size of entries in the segment.
+	TotalSizeInBytes uint64
+
+	// Options contains WAL-specific configuration parameters.
+	Options *domain.WALOptions
+}
+
 // NewSegment creates or opens a new log segment with the given ID and options.
 // It performs the following operations:
 //   - Creates/opens segment file with read-write-append permissions.
@@ -152,20 +174,24 @@ type Record struct {
 //   - lsn: Next log sequence number to use.
 //   - total: Count of entries if segment already exists.
 //   - opts: WAL configuration options.
-func NewSegment(ctx context.Context, id, lsn, total uint64, opts *domain.WALOptions) (*Segment, error) {
+func NewSegment(ctx context.Context, config *Config) (*Segment, error) {
+	if config == nil {
+		return nil, fmt.Errorf("config is required")
+	}
+
 	fs := fs.NewLocalFileSystem()
 	segment := Segment{
-		id:              id,
 		fs:              fs,
-		nextLogSequence: lsn,
-		opts:            opts,
-		totalEntries:    total,
 		createdAt:       time.Now(),
+		options:         config.Options,
+		id:              config.SegmentId,
+		nextLogSequence: config.NextLogSequence,
+		totalEntries:    config.TotalSizeInBytes,
 	}
 
 	// Generate segment file path
 	fileName := segment.generateName()
-	path := filepath.Join(opts.Directory, opts.SegmentOptions.SegmentDirectory, fileName)
+	path := filepath.Join(segment.options.Directory, segment.options.SegmentOptions.SegmentDirectory, fileName)
 
 	// Create/Open segment file with read-write-append permissions.
 	// 0644 permissions: owner can read/write, others can only read.
@@ -186,7 +212,7 @@ func NewSegment(ctx context.Context, id, lsn, total uint64, opts *domain.WALOpti
 	ctx, cancel := context.WithCancel(ctx)
 
 	// If current segment exceeds max size, create new segment with incremented id.
-	if size >= segment.opts.SegmentOptions.MaxSegmentSize {
+	if size >= segment.options.SegmentOptions.MaxSegmentSize {
 		if err := file.Close(); err != nil {
 			cancel()
 			return nil, fmt.Errorf("error closing file : %w", err)
@@ -198,13 +224,15 @@ func NewSegment(ctx context.Context, id, lsn, total uint64, opts *domain.WALOpti
 		segment.totalEntries = 0
 
 		fileName = segment.generateName()
-		path = filepath.Join(opts.Directory, opts.SegmentOptions.SegmentDirectory, fileName)
+		path = filepath.Join(segment.options.Directory, segment.options.SegmentOptions.SegmentDirectory, fileName)
 
 		file, err = os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
 		if err != nil {
 			cancel()
 			return nil, fmt.Errorf("error creating segment file : %w", err)
 		}
+	} else {
+		segment.size = size
 	}
 
 	// Move file pointer to end for appending.
@@ -217,22 +245,23 @@ func NewSegment(ctx context.Context, id, lsn, total uint64, opts *domain.WALOpti
 	segment.path = path
 	segment.file = file
 	segment.cancel = cancel
-	segment.writer = bufio.NewWriterSize(file, int(opts.BufferSize))
+	segment.bufferPool = pool.NewBufferPool(int(segment.options.BufferSize))
+	segment.writer = bufio.NewWriterSize(file, int(segment.options.BufferSize))
 
-	if opts.ChecksumOptions.Enable {
-		if opts.ChecksumOptions.Custom != nil {
-			segment.checksum = opts.ChecksumOptions.Custom
+	if segment.options.ChecksumOptions.Enable {
+		if segment.options.ChecksumOptions.Custom != nil {
+			segment.checksum = segment.options.ChecksumOptions.Custom
 		} else {
-			segment.checksum = checksum.NewCheckSummer(opts.ChecksumOptions.Algorithm)
+			segment.checksum = checksum.NewCheckSummer(segment.options.ChecksumOptions.Algorithm)
 		}
 	}
 
-	if opts.CompressionOptions.Enable {
+	if segment.options.CompressionOptions.Enable {
 		segment.compressor, err = compression.NewZstdCompression(
 			compression.Options{
-				Level:              opts.CompressionOptions.Level,
-				EncoderConcurrency: opts.CompressionOptions.EncoderConcurrency,
-				DecoderConcurrency: opts.CompressionOptions.DecoderConcurrency,
+				Level:              segment.options.CompressionOptions.Level,
+				EncoderConcurrency: segment.options.CompressionOptions.EncoderConcurrency,
+				DecoderConcurrency: segment.options.CompressionOptions.DecoderConcurrency,
 			},
 		)
 		if err != nil {
@@ -339,7 +368,7 @@ func (s *Segment) Write(context context.Context, payload *Record, sync bool) err
 	// - Header with sequence number and version.
 	// - Raw payload data.
 	// - Metadata (PrevOffset, Type, Timestamp).
-	if s.opts.ChecksumOptions.Enable {
+	if s.options.ChecksumOptions.Enable {
 		var buffer bytes.Buffer
 		if err := binary.Write(&buffer, binary.LittleEndian, entry); err != nil {
 			return fmt.Errorf("failed to write buffer entry : %w", err)
@@ -355,7 +384,7 @@ func (s *Segment) Write(context context.Context, payload *Record, sync bool) err
 	}
 
 	// Apply compression if enabled.
-	if s.opts.CompressionOptions.Enable {
+	if s.options.CompressionOptions.Enable {
 		compressed, err := s.compressor.Compress(encoded)
 		if err != nil {
 			return fmt.Errorf("failed to compress entry : %w", err)
@@ -369,8 +398,8 @@ func (s *Segment) Write(context context.Context, payload *Record, sync bool) err
 	entrySize := binary.Size(encoded) + binary.Size(entry.Header)
 
 	// Check if writing this entry would exceed segment size limit.
-	if entrySize > int(s.opts.SegmentOptions.MaxSegmentSize) {
-		s, err = s.Rotate() // Create new segment if size limit reached.
+	if entrySize > int(s.options.SegmentOptions.MaxSegmentSize) {
+		s, err = s.Rotate(context) // Create new segment if size limit reached.
 		if err != nil {
 			return fmt.Errorf("error rotating segment : %w", err)
 		}
@@ -396,7 +425,7 @@ func (s *Segment) Write(context context.Context, payload *Record, sync bool) err
 	s.currOffset += uint64(entrySize)
 
 	// Sync to disk if explicitly requested or globally configured.
-	if sync || s.opts.SyncOnWrite {
+	if sync || s.options.SyncOnWrite {
 		if err := s.writer.Flush(); err != nil {
 			return fmt.Errorf("failed to flush buffer : %w", err)
 		}
@@ -409,36 +438,49 @@ func (s *Segment) Write(context context.Context, payload *Record, sync bool) err
 	return nil
 }
 
-// Rotate performs a safe transition from the current segment to a new one.
+// Rotate creates a new segment and closes the current one,
+// managing the transition between log segments.
+//
 // It ensures data consistency by following these steps:
 //   - 1. Locks the current segment to prevent concurrent access.
 //   - 2. Writes a special rotation record to mark the transition.
 //   - 3. Safely closes the current segment.
 //   - 4. Creates and returns a new segment.
-func (s *Segment) Rotate() (*Segment, error) {
+func (s *Segment) Rotate(context context.Context) (*Segment, error) {
 	if s.closed.Load() {
 		return nil, ErrSegmentClosed
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	// Create a rotation record with the current segment's ID
 	// This serves as a marker in the log to indicate where rotation occurred.
-	payload := []byte(fmt.Sprintf("rotate-%d", s.id))
-	entry := Record{Payload: payload, Type: domain.EntryRotation}
+	buffer := s.bufferPool.Get()
+	defer s.bufferPool.Put(buffer)
 
-	// Write the rotation record to the current segment.
-	// sync=false since we'll be closing the segment immediately after.
-	if err := s.Write(s.ctx, &entry, false); err != nil {
+	buffer.WriteString(fmt.Sprintf("rotate-%d", s.id))
+	entry := Record{Payload: buffer.Bytes(), Type: domain.EntryRotation}
+
+	// Write the rotation marker to the current segment
+	// We don't force a sync here since we'll be closing the segment immediately.
+	// The Close operation will handle the final sync.
+	if err := s.Write(context, &entry, false); err != nil {
 		return nil, fmt.Errorf("failed to write rotation entry : %w", err)
 	}
 
-	if err := s.Close(); err != nil {
+	// Close the current segment, which includes flushing and syncing all data.
+	// This ensures all data is safely persisted before we transition to the new segment.
+	if err := s.Close(context); err != nil {
 		return nil, err
 	}
 
-	segment, err := NewSegment(s.ctx, s.id+1, 0, 0, s.opts)
+	// Create a new segment with an incremented id.
+	// The new segment starts fresh with:
+	// - Reset sequence numbers (starting from 0).
+	// - Reset size counter.
+	// - Inheriting options from the current segment.
+	segment, err := NewSegment(
+		context,
+		&Config{SegmentId: s.id + 1, NextLogSequence: 0, TotalSizeInBytes: 0, Options: s.options},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -461,7 +503,7 @@ func (s *Segment) Flush(sync bool) error {
 		return fmt.Errorf("failed to flush buffer : %w", err)
 	}
 
-	if sync || s.opts.SyncOnFlush {
+	if sync || s.options.SyncOnFlush {
 		if err := s.file.Sync(); err != nil {
 			return fmt.Errorf("failed to sync file : %w", err)
 		}
@@ -497,7 +539,7 @@ func (s *Segment) Finalize() error {
 //
 // Returns an error if any cleanup operation fails. The first error encountered
 // during cleanup will be returned, and subsequent cleanup steps will be skipped.
-func (s *Segment) Close() error {
+func (s *Segment) Close(context context.Context) error {
 	if !s.closed.CompareAndSwap(false, true) {
 		return ErrSegmentClosed
 	}
@@ -546,5 +588,5 @@ func (s *Segment) writeEntryHeader() error {
 // Creates a segment filename by combining the configured prefix
 // with the segment id. For example: "segment-0.log", "segment-1.log", etc.
 func (s *Segment) generateName() string {
-	return fmt.Sprintf("%s%d.log", s.opts.SegmentOptions.SegmentPrefix, s.id)
+	return fmt.Sprintf("%s%d.log", s.options.SegmentOptions.SegmentPrefix, s.id)
 }
