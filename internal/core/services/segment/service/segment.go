@@ -19,6 +19,7 @@ import (
 	"github.com/iamNilotpal/wal/internal/adapters/fs"
 	"github.com/iamNilotpal/wal/internal/core/domain"
 	"github.com/iamNilotpal/wal/internal/core/ports"
+	"github.com/iamNilotpal/wal/internal/core/services/segment"
 	"github.com/iamNilotpal/wal/pkg/pool"
 )
 
@@ -567,6 +568,93 @@ func (s *Segment) Close(context context.Context) error {
 	}
 
 	return nil
+}
+
+// Performs flush operation when the mutex is already held.
+func (s *Segment) flushLocked(sync bool) error {
+	// First, flush any buffered data to the underlying writer.
+	// This moves data from the in-memory buffer to the OS buffer.
+	if err := s.writer.Flush(); err != nil {
+		return fmt.Errorf("failed to flush buffer : %w", err)
+	}
+
+	// Sync file to disk if either:
+	// 1. The sync parameter is true (forced sync).
+	// 2. The segment is configured to sync on every flush.
+	// This ensures data durability by writing OS buffers to disk.
+	if sync || s.options.SyncOnFlush || s.options.SyncOnWrite {
+		if err := s.file.Sync(); err != nil {
+			return fmt.Errorf("failed to sync file : %w", err)
+		}
+	}
+
+	return nil
+}
+
+// Ensures that adding a new entry won't exceed the segment's configured
+// maximum size. If the new entry would cause the segment to exceed its size limit,
+// this method initiates the rotation process to create a new segment.
+// Returns an error if the rotation process fails during size limit handling.
+func (s *Segment) checkSizeLimits(context context.Context, entrySize int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Check if adding the new entry would exceed the maximum segment size
+	// The size check uses int conversion to handle potential large values safely
+	if int(s.size)+entrySize > int(s.options.SegmentOptions.MaxSegmentSize) {
+		if err := s.handleRotation(context); err != nil {
+			return fmt.Errorf("segment rotation failed: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// Manages the segment rotation process and ensures proper handling
+// of rotation callbacks. This method coordinates the transition between segments,
+// maintaining consistency in the logging system while preserving any rotation
+// callbacks that need to be executed.
+func (s *Segment) handleRotation(context context.Context) error {
+	// Create a new segment through the rotation process.
+	newSegment, err := s.Rotate(context)
+	if err != nil {
+		return fmt.Errorf("failed to rotate segment: %w", err)
+	}
+
+	// Transfer rotation callback handler to the new segment.
+	// This requires careful locking to ensure thread safety.
+	newSegment.mu.Lock()
+	newSegment.onRotate = s.onRotate
+	s = newSegment // Update the segment reference to point to the new segment
+	newSegment.mu.Unlock()
+
+	// Execute rotation callback if one is registered.
+	// This allows external components to react to segment rotations.
+	if s.onRotate != nil {
+		s.onRotate(s)
+	}
+
+	return nil
+}
+
+// Determines whether the internal buffer should be flushed based on
+// available space and configured thresholds.
+// Returns true if the buffer should be flushed, false otherwise.
+func (s *Segment) shouldFlushBuffer(additionalBytes int) bool {
+	available := s.writer.Available()
+	bufferSize := s.writer.Size()
+
+	// Perform an immediate flush if we can't accommodate the next write
+	// This is a critical check to prevent buffer overflow
+	if available < additionalBytes {
+		return true
+	}
+
+	// Implement preventive flushing based on a minimum available space threshold
+	// This helps maintain consistent write performance by avoiding situations
+	// where the buffer becomes too full
+	minAvailable := (bufferSize * segment.MinBufferAvailablePercent) / 100
+	return available < minAvailable
 }
 
 // Transforms a raw Record into a structured Entry ready for storage.
