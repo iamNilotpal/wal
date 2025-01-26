@@ -1,11 +1,12 @@
 package domain
 
 import (
-	"errors"
+	stdErrors "errors"
 	"fmt"
 
 	"github.com/iamNilotpal/wal/internal/core/domain/config"
 	pb "github.com/iamNilotpal/wal/internal/core/domain/proto"
+	"github.com/iamNilotpal/wal/pkg/errors"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -16,41 +17,41 @@ var (
 	// Indicates an entry type value outside the valid range.
 	// This typically occurs when reading corrupted data or when encountering
 	// entries from a newer version of the WAL format.
-	ErrInvalidEntryType = errors.New("invalid entry type")
+	ErrInvalidEntryType = stdErrors.New("invalid entry type")
 
 	// Indicates one of two conditions:
 	//  1. Payload size in header exceeds MaxPayloadSize (1GB).
 	//  2. Actual payload size doesn't match size recorded in header.
-	ErrInvalidPayloadSize = errors.New("invalid payload size")
+	ErrInvalidPayloadSize = stdErrors.New("invalid payload size")
 
 	// Occurs when attempting to process a nil Entry struct.
 	// This is a programming error that should be caught during development.
-	ErrNilEntry = errors.New("nil entry")
+	ErrNilEntry = stdErrors.New("nil entry")
 
 	// Indicates a nil []byte in EntryPayload.
 	// This differs from a valid zero-length payload and indicates
 	// potential memory corruption or programming errors.
-	ErrNilPayload = errors.New("nil payload")
+	ErrNilPayload = stdErrors.New("nil payload")
 
 	// Indicates missing critical metadata fields.
 	// Since metadata contains essential fields like checksums and timestamps,
 	// operations cannot proceed safely without it.
-	ErrNilMetadata = errors.New("nil metadata")
+	ErrNilMetadata = stdErrors.New("nil metadata")
 
 	// Indicates a nil EntryHeader struct.
 	// Headers contain critical sequencing and sizing information,
 	// so this error must be handled as a critical failure.
-	ErrNilHeader = errors.New("nil header")
+	ErrNilHeader = stdErrors.New("nil header")
 
 	// Occurs when an entry has a zero or negative timestamp.
 	// Timestamps must be monotonically increasing within a segment and are
 	// crucial for crash recovery ordering.
-	ErrInvalidTimestamp = errors.New("invalid timestamp")
+	ErrInvalidTimestamp = stdErrors.New("invalid timestamp")
 
 	// Indicates either:
 	//  1. Missing checksum (zero value).
 	//  2. Checksum mismatch during validation.
-	ErrInvalidChecksum = errors.New("invalid checksum")
+	ErrInvalidChecksum = stdErrors.New("invalid checksum")
 )
 
 // EntryType defines the different types of entries that can appear in the WAL.
@@ -118,13 +119,13 @@ type EntryHeader struct {
 // critical for maintaining log integrity and preventing corruption.
 func (h *EntryHeader) Validate() error {
 	if h == nil {
-		return ErrNilHeader
+		return errors.NewValidationError("Header", nil, ErrNilHeader)
 	}
 	if h.PayloadSize > config.MaxPayloadSize {
-		return ErrInvalidPayloadSize
+		return errors.NewValidationError("PayloadSize", h.PayloadSize, ErrInvalidPayloadSize)
 	}
 	if h.Version < config.MinVersion || h.Version > config.MaxVersion {
-		return fmt.Errorf("invalid version: %d", h.Version)
+		return errors.NewValidationError("Version", h.Version, fmt.Errorf("invalid version: %d", h.Version))
 	}
 	return nil
 }
@@ -156,16 +157,16 @@ type PayloadMetadata struct {
 // for log integrity and recovery operations.
 func (m *PayloadMetadata) Validate() error {
 	if m == nil {
-		return ErrNilMetadata
+		return errors.NewValidationError("Metadata", nil, ErrNilMetadata)
 	}
 	if !m.Type.IsValid() {
-		return ErrInvalidEntryType
+		return errors.NewValidationError("Type", m.Type, ErrInvalidEntryType)
 	}
 	if m.Timestamp <= 0 {
-		return ErrInvalidTimestamp
+		return errors.NewValidationError("Timestamp", m.Timestamp, ErrInvalidTimestamp)
 	}
 	if m.Checksum == 0 {
-		return ErrInvalidChecksum
+		return errors.NewValidationError("Checksum", m.Checksum, ErrInvalidChecksum)
 	}
 	return nil
 }
@@ -186,10 +187,10 @@ type EntryPayload struct {
 // proper initialization of all required fields.
 func (p *EntryPayload) Validate() error {
 	if p == nil {
-		return ErrNilPayload
+		return errors.NewValidationError("Payload", nil, ErrNilPayload)
 	}
 	if p.Payload == nil {
-		return errors.New("nil payload data")
+		return errors.NewValidationError("Payload", nil, ErrNilPayload)
 	}
 	return p.Metadata.Validate()
 }
@@ -217,14 +218,17 @@ func (e *Entry) Validate() error {
 		return ErrNilEntry
 	}
 	if err := e.Header.Validate(); err != nil {
-		return fmt.Errorf("invalid header: %w", err)
+		return err
 	}
 	if err := e.Payload.Validate(); err != nil {
-		return fmt.Errorf("invalid payload: %w", err)
+		return err
 	}
 	if uint32(len(e.Payload.Payload)) != e.Header.PayloadSize {
-		return fmt.Errorf("payload size mismatch: header=%d, actual=%d",
-			e.Header.PayloadSize, len(e.Payload.Payload))
+		return errors.NewValidationError(
+			"PayloadSize",
+			len(e.Payload.Payload),
+			fmt.Errorf("payload size mismatch: header=%d, actual=%d", e.Header.PayloadSize, len(e.Payload.Payload)),
+		)
 	}
 	return nil
 }
@@ -313,7 +317,7 @@ func (e *Entry) MarshalProto(validate bool) ([]byte, error) {
 // Deserializes an entry from its Protocol Buffer representation.
 func (e *Entry) UnMarshalProto(data []byte) error {
 	if len(data) == 0 {
-		return errors.New("empty proto data")
+		return errors.NewValidationError("Proto", nil, fmt.Errorf("empty proto data"))
 	}
 
 	var entry pb.Entry

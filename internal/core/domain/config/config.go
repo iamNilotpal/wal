@@ -2,33 +2,20 @@ package config
 
 import (
 	"fmt"
+
+	"github.com/iamNilotpal/wal/pkg/errors"
 )
 
 const (
 	// MinPayloadSize represents the absolute minimum size for a log entry.
 	// While smaller writes are allowed, they will be optimized to this size
 	// when auto-adjustment is enabled. This helps maintain I/O efficiency.
-	MinPayloadSize = 128 // 128 bytes minimum.
-
-	// SmallPayloadSize is optimized for frequent, latency-sensitive operations.
-	// This size aligns with common page sizes in modern file systems and
-	// provides good performance for small, frequent updates.
-	SmallPayloadSize = 4096 // 4KB (typical page size).
-
-	// MediumPayloadSize is designed for regular operational logging.
-	// This size provides a good balance between write efficiency and
-	// memory usage for typical application logging patterns.
-	MediumPayloadSize = 32 * 1024 // 32KB
-
-	// LargePayloadSize is intended for bulk operations and data dumps.
-	// This size is optimized for high-throughput scenarios where
-	// latency is less critical than overall throughput.
-	LargePayloadSize = 256 * 1024 // 256KB.
+	MinPayloadSize = 80 // 80 bytes minimum. (header + payload = 128 bytes)
 
 	// MaxPayloadSize defines the absolute maximum size for a single log entry.
 	// This limit helps prevent memory exhaustion and ensures consistent
 	// performance characteristics across the system.
-	MaxPayloadSize = 4 * 1024 * 1024 // 4MB.
+	MaxPayloadSize = 83_88_560 // 7.99MB. (header + payload = 8MB)
 
 	// Batch processing thresholds define how multiple log entries are grouped
 	// together for improved I/O efficiency.
@@ -112,62 +99,29 @@ func NewPayloadConfig(opts ...PayloadConfigOption) *PayloadConfig {
 	return cfg
 }
 
-// PayloadValidationError represents specific configuration validation errors.
-type PayloadValidationError struct {
-	Field   string
-	Value   uint32
-	Details string
-}
-
-func (e *PayloadValidationError) Error() string {
-	return fmt.Sprintf("invalid configuration for %s (%d): %s", e.Field, e.Value, e.Details)
-}
-
 // Validate performs comprehensive validation of PayloadConfig settings
 // It checks all configuration parameters against defined constraints
 // and returns detailed errors for any validation failures
 func (c *PayloadConfig) Validate() error {
 	// Validate minimum size constraints.
 	if c.MinSize < MinPayloadSize {
-		return &PayloadValidationError{
-			Field:   "MinSize",
-			Value:   c.MinSize,
-			Details: fmt.Sprintf("below minimum allowed value of %d", MinPayloadSize),
-		}
-	}
-
-	if c.MinSize > MediumPayloadSize {
-		return &PayloadValidationError{
-			Field:   "MinSize",
-			Value:   c.MinSize,
-			Details: fmt.Sprintf("exceeds reasonable minimum threshold of %d", MediumPayloadSize),
-		}
+		return errors.NewValidationError(
+			"MinSize", c.MinSize, fmt.Errorf("below minimum allowed value of %d", MinPayloadSize),
+		)
 	}
 
 	// Validate maximum size constraints.
 	if c.MaxSize > MaxPayloadSize {
-		return &PayloadValidationError{
-			Field:   "MaxSize",
-			Value:   c.MaxSize,
-			Details: fmt.Sprintf("exceeds maximum allowed value of %d", MaxPayloadSize),
-		}
-	}
-
-	if c.MaxSize < SmallPayloadSize {
-		return &PayloadValidationError{
-			Field:   "MaxSize",
-			Value:   c.MaxSize,
-			Details: fmt.Sprintf("below minimum efficient size of %d", SmallPayloadSize),
-		}
+		return errors.NewValidationError(
+			"MaxSize", c.MaxSize, fmt.Errorf("exceeds maximum allowed value of %d", MaxPayloadSize),
+		)
 	}
 
 	// Validate size relationship constraints.
 	if c.MinSize > c.MaxSize {
-		return &PayloadValidationError{
-			Field:   "MinSize",
-			Value:   c.MinSize,
-			Details: fmt.Sprintf("greater than MaxSize (%d)", c.MaxSize),
-		}
+		return errors.NewValidationError(
+			"MinSize", c.MinSize, fmt.Errorf("greater than MaxSize (%d)", c.MaxSize),
+		)
 	}
 
 	return nil

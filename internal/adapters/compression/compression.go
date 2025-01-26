@@ -5,6 +5,7 @@ import (
 	"runtime"
 
 	"github.com/iamNilotpal/wal/internal/core/domain"
+	"github.com/iamNilotpal/wal/pkg/errors"
 )
 
 // Returns CompressionOptions struct initialized with
@@ -29,20 +30,28 @@ func Validate(opts *domain.CompressionOptions) error {
 
 	// Validate compression level (1-9)
 	if opts.Level < FastestLevel || opts.Level > BestLevel {
-		return fmt.Errorf("compression level must be between %d and %d, got %d", FastestLevel, BestLevel, opts.Level)
+		return errors.NewValidationError(
+			"Level",
+			opts.Level,
+			fmt.Errorf("compression level must be between %d and %d, got %d", FastestLevel, BestLevel, opts.Level),
+		)
 	}
 
 	// Validate encoder concurrency
 	if opts.EncoderConcurrency > uint8(runtime.NumCPU()) {
-		return fmt.Errorf(
-			"encoder concurrency must be between 0 and %d, got %d", runtime.NumCPU(), opts.EncoderConcurrency,
+		return errors.NewValidationError(
+			"EncoderConcurrency",
+			opts.EncoderConcurrency,
+			fmt.Errorf("encoder concurrency must be between 0 and %d, got %d", runtime.NumCPU(), opts.EncoderConcurrency),
 		)
 	}
 
 	// Validate decoder concurrency
 	if opts.DecoderConcurrency > uint8(runtime.NumCPU()) {
-		return fmt.Errorf(
-			"decoder concurrency must be between 0 and %d, got %d", runtime.NumCPU(), opts.DecoderConcurrency,
+		return errors.NewValidationError(
+			"DecoderConcurrency",
+			opts.DecoderConcurrency,
+			fmt.Errorf("decoder concurrency must be between 0 and %d, got %d", runtime.NumCPU(), opts.DecoderConcurrency),
 		)
 	}
 

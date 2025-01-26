@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/iamNilotpal/wal/internal/core/domain"
+	"github.com/iamNilotpal/wal/internal/core/domain/config"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -84,7 +85,7 @@ func (z *ZstdCompression) Compress(data []byte) ([]byte, error) {
 	z.mu.RLock()
 	defer z.mu.RUnlock()
 
-	if len(data) < 64 {
+	if len(data) < config.CompressionThreshold {
 		return data, nil
 	}
 

@@ -5,6 +5,7 @@ import (
 
 	"github.com/iamNilotpal/wal/internal/core/domain"
 	"github.com/iamNilotpal/wal/internal/core/ports"
+	"github.com/iamNilotpal/wal/pkg/errors"
 )
 
 const (
@@ -60,7 +61,9 @@ func Validate(opts *domain.ChecksumOptions) error {
 		switch opts.Algorithm {
 		case CRC32IEEE, CRC64ISO, CRC64ECMA, SHA1, SHA256:
 		default:
-			return fmt.Errorf("unsupported checksum algorithm: %s", opts.Algorithm)
+			return errors.NewValidationError(
+				"Algorithm", opts.Algorithm, fmt.Errorf("unsupported checksum algorithm: %s", opts.Algorithm),
+			)
 		}
 	}
 

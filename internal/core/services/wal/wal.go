@@ -11,6 +11,7 @@ import (
 	"github.com/iamNilotpal/wal/internal/core/ports"
 	sm "github.com/iamNilotpal/wal/internal/core/services/segment/manager"
 	segment "github.com/iamNilotpal/wal/internal/core/services/segment/service"
+	"github.com/iamNilotpal/wal/pkg/errors"
 )
 
 // WAL implements a Write-Ahead Log for durability and crash recovery.
@@ -87,6 +88,9 @@ func New(opts *domain.WALOptions) (*WAL, error) {
 //   - sync parameter is true.
 //   - sync is false but SyncOnWrite is true.
 func (wal *WAL) Write(context context.Context, data []byte, sync bool) error {
+	if err := wal.validateSize(uint32(len(data))); err != nil {
+		return err
+	}
 	return wal.sm.Write(context, data, sync)
 }
 
@@ -129,4 +133,20 @@ func (wal *WAL) SegmentInfo() (*segment.SegmentInfo, error) {
 func (wal *WAL) Close(context context.Context) error {
 	wal.cancel()
 	return wal.sm.Close(context)
+}
+
+func (wal *WAL) validateSize(size uint32) error {
+	if size < wal.options.PayloadConfig.MinSize {
+		return errors.NewValidationError(
+			"PayloadSize", size, fmt.Errorf("invalid payload size, expected %d got %d", wal.options.PayloadConfig.MinSize, size),
+		)
+	}
+
+	if size > wal.options.PayloadConfig.MaxSize {
+		return errors.NewValidationError(
+			"PayloadSize", size, fmt.Errorf("invalid payload size, expected %d got %d", wal.options.PayloadConfig.MaxSize, size),
+		)
+	}
+
+	return nil
 }
