@@ -17,6 +17,7 @@ import (
 	"github.com/iamNilotpal/wal/internal/adapters/compression"
 	"github.com/iamNilotpal/wal/internal/adapters/fs"
 	"github.com/iamNilotpal/wal/internal/core/domain"
+	"github.com/iamNilotpal/wal/internal/core/domain/config"
 	"github.com/iamNilotpal/wal/internal/core/ports"
 	"github.com/iamNilotpal/wal/internal/core/services/segment"
 	"github.com/iamNilotpal/wal/pkg/pool"
@@ -358,7 +359,6 @@ func (s *Segment) Write(ctx context.Context, record *Record, sync bool) error {
 			return ctx.Err()
 		default:
 			{
-
 				headerSize := binary.Size(entry.Header)
 				entrySize := len(encoded) + headerSize
 
@@ -676,7 +676,7 @@ func (s *Segment) shouldFlushBuffer(additionalBytes int) bool {
 func (s *Segment) prepareEntry(record *Record) (*domain.Entry, []byte, error) {
 	// Create a new Entry structure with metadata.
 	entry := &domain.Entry{
-		Header: &domain.EntryHeader{Version: 0, Sequence: s.nextLogSequence},
+		Header: &domain.EntryHeader{Version: config.MaxVersion, Sequence: s.nextLogSequence},
 		Payload: &domain.EntryPayload{
 			Payload: record.Payload,
 			Metadata: &domain.PayloadMetadata{
@@ -688,7 +688,7 @@ func (s *Segment) prepareEntry(record *Record) (*domain.Entry, []byte, error) {
 	}
 
 	// First serialization to get the base encoded form.
-	encoded, err := entry.MarshalProto()
+	encoded, err := entry.MarshalProto(false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -698,7 +698,7 @@ func (s *Segment) prepareEntry(record *Record) (*domain.Entry, []byte, error) {
 		s.setChecksum(entry, encoded)
 
 		// Re-encode after setting checksum to include it in the final bytes.
-		encoded, err = entry.MarshalProto()
+		encoded, err = entry.MarshalProto(true)
 		if err != nil {
 			return nil, nil, err
 		}

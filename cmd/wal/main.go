@@ -15,7 +15,15 @@ func main() {
 
 	logger.Info("starting wal service")
 
-	wal, err := wal.New(&domain.WALOptions{})
+	wal, err := wal.New(&domain.WALOptions{
+		RetentionDays:   10,
+		MinSegmentsKept: 10,
+		MaxSegmentsKept: 20,
+		SyncOnFlush:     true,
+		SyncOnWrite:     true,
+		BufferSize:      8192,
+	})
+
 	if err != nil {
 		logger.Infow("create wal error", "error", err)
 		logger.Sync()

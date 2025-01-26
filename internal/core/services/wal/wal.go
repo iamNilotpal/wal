@@ -2,8 +2,13 @@ package wal
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"path/filepath"
 
+	"github.com/iamNilotpal/wal/internal/adapters/fs"
 	"github.com/iamNilotpal/wal/internal/core/domain"
+	"github.com/iamNilotpal/wal/internal/core/ports"
 	sm "github.com/iamNilotpal/wal/internal/core/services/segment/manager"
 	segment "github.com/iamNilotpal/wal/internal/core/services/segment/service"
 )
@@ -14,8 +19,9 @@ import (
 // sequential logging and supports crash recovery.
 type WAL struct {
 	// Core components and configuration
-	options *domain.WALOptions // Configuration controlling WAL behavior
-	sm      *sm.SegmentManager // Handles segment lifecycle and maintenance
+	options *domain.WALOptions   // Configuration controlling WAL behavior.
+	sm      *sm.SegmentManager   // Handles segment lifecycle and maintenance.
+	fs      ports.FileSystemPort // Local file system access.
 
 	// Lifecycle and concurrency control
 	ctx    context.Context    // Controls the WAL's operational lifecycle
@@ -49,12 +55,28 @@ func New(opts *domain.WALOptions) (*WAL, error) {
 		return nil, err
 	}
 
-	return &WAL{
-		sm:      sm,
-		ctx:     ctx,
-		options: opts,
-		cancel:  cancel,
-	}, nil
+	fs := fs.NewLocalFileSystem()
+	metaFile, err := fs.CreateFile(filepath.Join(opts.Directory, "meta.json"), true)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("error creating meta.json file : %w", err)
+	}
+
+	data, err := json.Marshal(opts)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("error marshalling options : %w", err)
+	}
+
+	if n, err := metaFile.Write(data); err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to write meta.json file : %w", err)
+	} else if n < len(data) {
+		cancel()
+		return nil, fmt.Errorf("failed to write meta.json file : %w", err)
+	}
+
+	return &WAL{fs: fs, sm: sm, ctx: ctx, options: opts, cancel: cancel}, nil
 }
 
 // Writes an entry containing the provided data bytes to the active segment. The context
