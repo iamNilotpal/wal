@@ -3,6 +3,8 @@ package domain
 
 import (
 	"time"
+
+	"github.com/iamNilotpal/wal/internal/core/domain/config"
 )
 
 // WALOptions defines the configuration parameters for the Write-Ahead Log system.
@@ -21,12 +23,6 @@ type WALOptions struct {
 	// Default: 1MB
 	BufferSize uint32
 
-	// EnableMetrics toggles the collection of operational metrics.
-	// When enabled, metrics about file operations, rotations, and performance
-	// will be recorded. Recommended for production environments.
-	// Has minimal performance overhead.
-	EnableMetrics bool
-
 	// SyncOnWrite determines whether to force sync to disk after each write.
 	// Enabling this provides better durability but may impact performance.
 	// Recommended for critical data where durability is more important than speed.
@@ -44,6 +40,8 @@ type WALOptions struct {
 	// RetentionDays specifies how many days to keep rotated WAL files.
 	// Files older than this will be automatically deleted during maintenance.
 	// Must be between 1 and 365.
+	//
+	// Default: 7 Days
 	RetentionDays uint16
 
 	// MinSegmentsKept sets the minimum number of segments to retain,
@@ -81,13 +79,19 @@ type WALOptions struct {
 	// Default: 5 seconds
 	FlushInterval time.Duration
 
-	// ChecksumOptions configures integrity verification settings for WAL segments.
+	// ChecksumOptions configures data integrity verification including
+	// algorithm selection, verification frequency and error handling.
 	ChecksumOptions *ChecksumOptions
 
-	// CompressionOptions defines settings for WAL segment compression.
+	// CompressionOptions defines data compression settings including
+	// algorithm, compression level and entry size thresholds.
 	CompressionOptions *CompressionOptions
 
-	// SegmentOptions specifies configuration parameters for WAL segments including
-	// size limits, retention policies, and storage locations.
+	// SegmentOptions configures WAL segment management including
+	// size limits, naming convention and rotation policies.
 	SegmentOptions *SegmentOptions
+
+	// PayloadConfig controls entry size management including
+	// validation, optimization and size categories.
+	PayloadConfig *config.PayloadConfig
 }

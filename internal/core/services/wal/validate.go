@@ -78,6 +78,12 @@ func Validate(opts *domain.WALOptions) error {
 		}
 	}
 
+	if opts.PayloadConfig != nil {
+		if err := opts.PayloadConfig.Validate(); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
