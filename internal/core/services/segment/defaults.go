@@ -23,10 +23,10 @@ const (
 // durability, and resource usage for typical use cases.
 func DefaultOptions() *domain.SegmentOptions {
 	return &domain.SegmentOptions{
-		MaxSegmentAge:    MaxSegmentAge,
-		SegmentPrefix:    SegmentPrefix,
-		MinSegmentSize:   MinSegmentSize,
-		MaxSegmentSize:   MaxSegmentSize,
-		SegmentDirectory: SegmentDirectory,
+		MaxSegmentAge:  MaxSegmentAge,
+		Prefix:         SegmentPrefix,
+		MinSegmentSize: MinSegmentSize,
+		MaxSegmentSize: MaxSegmentSize,
+		Directory:      SegmentDirectory,
 	}
 }

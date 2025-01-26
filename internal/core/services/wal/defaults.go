@@ -67,12 +67,12 @@ func prepareDefaults(opts *domain.WALOptions) *domain.WALOptions {
 	if opts.SegmentOptions == nil {
 		opts.SegmentOptions = segment.DefaultOptions()
 	} else {
-		if strings.TrimSpace(opts.SegmentOptions.SegmentDirectory) == "" {
-			opts.SegmentOptions.SegmentDirectory = segment.SegmentDirectory
+		if strings.TrimSpace(opts.SegmentOptions.Directory) == "" {
+			opts.SegmentOptions.Directory = segment.SegmentDirectory
 		}
 
-		if strings.TrimSpace(opts.SegmentOptions.SegmentPrefix) == "" {
-			opts.SegmentOptions.SegmentPrefix = segment.SegmentPrefix
+		if strings.TrimSpace(opts.SegmentOptions.Prefix) == "" {
+			opts.SegmentOptions.Prefix = segment.SegmentPrefix
 		}
 	}
 
@@ -99,8 +99,8 @@ func prepareDefaults(opts *domain.WALOptions) *domain.WALOptions {
 		}
 	}
 
-	if opts.PayloadConfig == nil {
-		opts.PayloadConfig = config.DefaultPayloadConfig()
+	if opts.PayloadOptions == nil {
+		opts.PayloadOptions = config.DefaultPayloadConfig()
 	}
 
 	return opts

@@ -136,15 +136,15 @@ func (wal *WAL) Close(context context.Context) error {
 }
 
 func (wal *WAL) validateSize(size uint32) error {
-	if size < wal.options.PayloadConfig.MinSize {
+	if size < wal.options.PayloadOptions.MinSize {
 		return errors.NewValidationError(
-			"PayloadSize", size, fmt.Errorf("invalid payload size, expected %d got %d", wal.options.PayloadConfig.MinSize, size),
+			"payloadSize", size, fmt.Errorf("invalid payload size, expected %d got %d", wal.options.PayloadOptions.MinSize, size),
 		)
 	}
 
-	if size > wal.options.PayloadConfig.MaxSize {
+	if size > wal.options.PayloadOptions.MaxSize {
 		return errors.NewValidationError(
-			"PayloadSize", size, fmt.Errorf("invalid payload size, expected %d got %d", wal.options.PayloadConfig.MaxSize, size),
+			"payloadSize", size, fmt.Errorf("invalid payload size, expected %d got %d", wal.options.PayloadOptions.MaxSize, size),
 		)
 	}
 

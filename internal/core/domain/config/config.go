@@ -48,27 +48,27 @@ const (
 	MaxVersion = 1 // Current version.
 )
 
-// PayloadConfig provides thread-safe configuration for WAL operations.
+// PayloadOptions provides thread-safe configuration for WAL operations.
 // It maintains size constraints and processing preferences while
 // ensuring safe concurrent access to all settings.
-type PayloadConfig struct {
+type PayloadOptions struct {
 	// MinSize enforces the minimum acceptable entry size
-	MinSize uint32
+	MinSize uint32 `json:"minSize"`
 
 	// MaxSize enforces the maximum acceptable entry size
-	MaxSize uint32
+	MaxSize uint32 `json:"maxSize"`
 }
 
 // PayloadConfigOption defines the signature for configuration options.
 // This pattern provides a flexible and type-safe way to modify
 // configuration settings during initialization.
-type PayloadConfigOption func(*PayloadConfig)
+type PayloadConfigOption func(*PayloadOptions)
 
 // WithMinSize sets the minimum entry size for the configuration.
 // The provided size must be at least MinPayloadSize to be accepted.
 // This option helps prevent excessive fragmentation from small entries.
 func WithMinSize(size uint32) PayloadConfigOption {
-	return func(c *PayloadConfig) {
+	return func(c *PayloadOptions) {
 		if size >= MinPayloadSize {
 			c.MinSize = size
 		}
@@ -79,7 +79,7 @@ func WithMinSize(size uint32) PayloadConfigOption {
 // The size must not exceed MaxPayloadSize to prevent resource exhaustion
 // and maintain consistent performance characteristics.
 func WithMaxSize(size uint32) PayloadConfigOption {
-	return func(c *PayloadConfig) {
+	return func(c *PayloadOptions) {
 		if size <= MaxPayloadSize {
 			c.MaxSize = size
 		}
@@ -89,7 +89,7 @@ func WithMaxSize(size uint32) PayloadConfigOption {
 // It initializes a LogConfig with default values and applies any
 // provided configuration options. The resulting configuration is
 // ready for immediate use in WAL operations.
-func NewPayloadConfig(opts ...PayloadConfigOption) *PayloadConfig {
+func NewPayloadConfig(opts ...PayloadConfigOption) *PayloadOptions {
 	cfg := DefaultPayloadConfig()
 
 	for _, opt := range opts {
@@ -102,25 +102,25 @@ func NewPayloadConfig(opts ...PayloadConfigOption) *PayloadConfig {
 // Validate performs comprehensive validation of PayloadConfig settings
 // It checks all configuration parameters against defined constraints
 // and returns detailed errors for any validation failures
-func (c *PayloadConfig) Validate() error {
+func (c *PayloadOptions) Validate() error {
 	// Validate minimum size constraints.
 	if c.MinSize < MinPayloadSize {
 		return errors.NewValidationError(
-			"MinSize", c.MinSize, fmt.Errorf("below minimum allowed value of %d", MinPayloadSize),
+			"minSize", c.MinSize, fmt.Errorf("below minimum allowed value of %d", MinPayloadSize),
 		)
 	}
 
 	// Validate maximum size constraints.
 	if c.MaxSize > MaxPayloadSize {
 		return errors.NewValidationError(
-			"MaxSize", c.MaxSize, fmt.Errorf("exceeds maximum allowed value of %d", MaxPayloadSize),
+			"maxSize", c.MaxSize, fmt.Errorf("exceeds maximum allowed value of %d", MaxPayloadSize),
 		)
 	}
 
 	// Validate size relationship constraints.
 	if c.MinSize > c.MaxSize {
 		return errors.NewValidationError(
-			"MinSize", c.MinSize, fmt.Errorf("greater than MaxSize (%d)", c.MaxSize),
+			"minSize", c.MinSize, fmt.Errorf("greater than MaxSize (%d)", c.MaxSize),
 		)
 	}
 

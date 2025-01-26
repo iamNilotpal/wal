@@ -119,14 +119,17 @@ type EntryHeader struct {
 // critical for maintaining log integrity and preventing corruption.
 func (h *EntryHeader) Validate() error {
 	if h == nil {
-		return errors.NewValidationError("Header", nil, ErrNilHeader)
+		return errors.NewValidationError("header", nil, ErrNilHeader)
 	}
+
 	if h.PayloadSize > config.MaxPayloadSize {
-		return errors.NewValidationError("PayloadSize", h.PayloadSize, ErrInvalidPayloadSize)
+		return errors.NewValidationError("payloadSize", h.PayloadSize, ErrInvalidPayloadSize)
 	}
+
 	if h.Version < config.MinVersion || h.Version > config.MaxVersion {
-		return errors.NewValidationError("Version", h.Version, fmt.Errorf("invalid version: %d", h.Version))
+		return errors.NewValidationError("version", h.Version, fmt.Errorf("invalid version: %d", h.Version))
 	}
+
 	return nil
 }
 
@@ -157,17 +160,21 @@ type PayloadMetadata struct {
 // for log integrity and recovery operations.
 func (m *PayloadMetadata) Validate() error {
 	if m == nil {
-		return errors.NewValidationError("Metadata", nil, ErrNilMetadata)
+		return errors.NewValidationError("metadata", nil, ErrNilMetadata)
 	}
+
 	if !m.Type.IsValid() {
-		return errors.NewValidationError("Type", m.Type, ErrInvalidEntryType)
+		return errors.NewValidationError("type", m.Type, ErrInvalidEntryType)
 	}
+
 	if m.Timestamp <= 0 {
-		return errors.NewValidationError("Timestamp", m.Timestamp, ErrInvalidTimestamp)
+		return errors.NewValidationError("timestamp", m.Timestamp, ErrInvalidTimestamp)
 	}
+
 	if m.Checksum == 0 {
-		return errors.NewValidationError("Checksum", m.Checksum, ErrInvalidChecksum)
+		return errors.NewValidationError("checksum", m.Checksum, ErrInvalidChecksum)
 	}
+
 	return nil
 }
 
@@ -187,10 +194,10 @@ type EntryPayload struct {
 // proper initialization of all required fields.
 func (p *EntryPayload) Validate() error {
 	if p == nil {
-		return errors.NewValidationError("Payload", nil, ErrNilPayload)
+		return errors.NewValidationError("payload", nil, ErrNilPayload)
 	}
 	if p.Payload == nil {
-		return errors.NewValidationError("Payload", nil, ErrNilPayload)
+		return errors.NewValidationError("payload", nil, ErrNilPayload)
 	}
 	return p.Metadata.Validate()
 }
@@ -217,19 +224,15 @@ func (e *Entry) Validate() error {
 	if e == nil {
 		return ErrNilEntry
 	}
+
 	if err := e.Header.Validate(); err != nil {
 		return err
 	}
+
 	if err := e.Payload.Validate(); err != nil {
 		return err
 	}
-	if uint32(len(e.Payload.Payload)) != e.Header.PayloadSize {
-		return errors.NewValidationError(
-			"PayloadSize",
-			len(e.Payload.Payload),
-			fmt.Errorf("payload size mismatch: header=%d, actual=%d", e.Header.PayloadSize, len(e.Payload.Payload)),
-		)
-	}
+
 	return nil
 }
 
@@ -289,7 +292,7 @@ func (t EntryType) IsSpecial() bool {
 func (e *Entry) MarshalProto(validate bool) ([]byte, error) {
 	if validate {
 		if err := e.Validate(); err != nil {
-			return nil, fmt.Errorf("entry validation failed: %w", err)
+			return nil, err
 		}
 	}
 
@@ -317,7 +320,7 @@ func (e *Entry) MarshalProto(validate bool) ([]byte, error) {
 // Deserializes an entry from its Protocol Buffer representation.
 func (e *Entry) UnMarshalProto(data []byte) error {
 	if len(data) == 0 {
-		return errors.NewValidationError("Proto", nil, fmt.Errorf("empty proto data"))
+		return errors.NewValidationError("proto", nil, fmt.Errorf("empty proto data"))
 	}
 
 	var entry pb.Entry
@@ -341,5 +344,5 @@ func (e *Entry) UnMarshalProto(data []byte) error {
 	e.Payload.Metadata.Type = EntryType(entry.Metadata.Type)
 	e.Payload.Metadata.PrevOffset = entry.Metadata.PrevOffset
 
-	return nil
+	return e.Validate()
 }

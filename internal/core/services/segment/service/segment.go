@@ -20,6 +20,7 @@ import (
 	"github.com/iamNilotpal/wal/internal/core/domain/config"
 	"github.com/iamNilotpal/wal/internal/core/ports"
 	"github.com/iamNilotpal/wal/internal/core/services/segment"
+	validation "github.com/iamNilotpal/wal/pkg/errors"
 	"github.com/iamNilotpal/wal/pkg/pool"
 	"github.com/iamNilotpal/wal/pkg/system"
 )
@@ -178,7 +179,7 @@ type Config struct {
 //   - opts: WAL configuration options.
 func NewSegment(ctx context.Context, config *Config) (*Segment, error) {
 	if config == nil {
-		return nil, fmt.Errorf("config is required")
+		return nil, validation.NewValidationError("config", nil, fmt.Errorf("config is required"))
 	}
 
 	fs := fs.NewLocalFileSystem()
@@ -193,7 +194,7 @@ func NewSegment(ctx context.Context, config *Config) (*Segment, error) {
 
 	// Generate segment file path
 	fileName := segment.generateName()
-	path := filepath.Join(segment.options.Directory, segment.options.SegmentOptions.SegmentDirectory, fileName)
+	path := filepath.Join(segment.options.Directory, segment.options.SegmentOptions.Directory, fileName)
 
 	// Create/Open segment file with read-write-append permissions.
 	// 0644 permissions: owner can read/write, others can only read.
@@ -226,7 +227,7 @@ func NewSegment(ctx context.Context, config *Config) (*Segment, error) {
 		segment.totalEntries = 0
 
 		fileName = segment.generateName()
-		path = filepath.Join(segment.options.Directory, segment.options.SegmentOptions.SegmentDirectory, fileName)
+		path = filepath.Join(segment.options.Directory, segment.options.SegmentOptions.Directory, fileName)
 
 		file, err = os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
 		if err != nil {
@@ -698,7 +699,7 @@ func (s *Segment) prepareEntry(record *Record) (*domain.Entry, []byte, error) {
 		s.setChecksum(entry, encoded)
 
 		// Re-encode after setting checksum to include it in the final bytes.
-		encoded, err = entry.MarshalProto(true)
+		encoded, err = entry.MarshalProto(false)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -714,6 +715,10 @@ func (s *Segment) prepareEntry(record *Record) (*domain.Entry, []byte, error) {
 
 	// Set the final size after all transformations.
 	entry.Header.PayloadSize = uint32(len(encoded))
+
+	if err := entry.Validate(); err != nil {
+		return nil, nil, err
+	}
 	return entry, encoded, nil
 }
 
@@ -763,5 +768,5 @@ func (s *Segment) writeEntryHeader() error {
 // Creates a segment filename by combining the configured prefix
 // with the segment id. For example: "segment-0.log", "segment-1.log", etc.
 func (s *Segment) generateName() string {
-	return fmt.Sprintf("%s%d.log", s.options.SegmentOptions.SegmentPrefix, s.id)
+	return fmt.Sprintf("%s%d.log", s.options.SegmentOptions.Prefix, s.id)
 }

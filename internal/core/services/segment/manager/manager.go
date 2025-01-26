@@ -70,7 +70,7 @@ func NewSegmentManager(ctx context.Context, opts *domain.WALOptions) (*SegmentMa
 
 	// Ensure segment directory exists with proper permissions (0755)
 	// Directory is created recursively if it doesn't exist.
-	path := filepath.Join(opts.Directory, opts.SegmentOptions.SegmentDirectory)
+	path := filepath.Join(opts.Directory, opts.SegmentOptions.Directory)
 	if err := sm.fs.CreateDir(path, 0755, true); err != nil {
 		return nil, err
 	}
@@ -215,7 +215,7 @@ func (sm *SegmentManager) getLatestSegmentId() (uint64, error) {
 
 	for _, name := range files {
 		_, segment := filepath.Split(name)
-		strId := strings.Split(strings.TrimPrefix(segment, sm.opts.SegmentOptions.SegmentPrefix), ".")[0]
+		strId := strings.Split(strings.TrimPrefix(segment, sm.opts.SegmentOptions.Prefix), ".")[0]
 
 		id, err := strconv.Atoi(strId)
 		if err != nil {
@@ -233,8 +233,8 @@ func (sm *SegmentManager) getLatestSegmentId() (uint64, error) {
 
 // Scans a segment file to find the highest sequence number and total entries.
 func (sm *SegmentManager) scanSegmentMetadata(id uint64) (uint64, uint64, error) {
-	fileName := fmt.Sprintf("%s%d.log", sm.opts.SegmentOptions.SegmentPrefix, id)
-	path := filepath.Join(sm.opts.Directory, sm.opts.SegmentOptions.SegmentDirectory, fileName)
+	fileName := fmt.Sprintf("%s%d.log", sm.opts.SegmentOptions.Prefix, id)
+	path := filepath.Join(sm.opts.Directory, sm.opts.SegmentOptions.Directory, fileName)
 
 	var offset uint64
 	var totalEntries uint64
@@ -296,7 +296,7 @@ func (sm *SegmentManager) loadOrCreateSegment(id, lsn, total uint64) error {
 // Returns an empty slice and error if directory reading fails.
 func (sm *SegmentManager) loadExistingSegments() ([]string, error) {
 	path := filepath.Join(
-		sm.opts.Directory, sm.opts.SegmentOptions.SegmentDirectory, sm.opts.SegmentOptions.SegmentPrefix+"*",
+		sm.opts.Directory, sm.opts.SegmentOptions.Directory, sm.opts.SegmentOptions.Prefix+"*",
 	)
 
 	files, err := sm.fs.ReadDir(path)

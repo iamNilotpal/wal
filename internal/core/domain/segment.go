@@ -12,31 +12,31 @@ type SegmentOptions struct {
 	// When a segment reaches this size, a new segment will be created.
 	// Larger segments mean fewer files but slower compaction and recovery.
 	// Must be at least 1MB. Default is 64MB if set to 0.
-	MaxSegmentSize uint32
+	MaxSegmentSize uint32 `json:"maxSegmentSize"`
 
 	// MinSegmentSize defines the minimum size a segment should reach before
 	// allowing rotation. This prevents creating too many small segments.
 	// Should be significantly smaller than MaxSegmentSize.
 	//
 	// Default: 1MB
-	MinSegmentSize uint32
+	MinSegmentSize uint32 `json:"minSegmentSize"`
 
 	// MaxSegmentAge defines the maximum time a segment should remain active
 	// before rotation, regardless of size. This ensures regular rotation
 	// even with low write volume.
 	//
 	// Default: 24 hours
-	MaxSegmentAge time.Duration
+	MaxSegmentAge time.Duration `json:"maxSegmentAge"`
 
-	// SegmentDirectory specifies where segment files are stored.
+	// Directory specifies where segment files are stored.
 	// Should be on a filesystem appropriate for write-ahead logging.
 	//
 	// Default: "/segments"
-	SegmentDirectory string
+	Directory string `json:"directory"`
 
-	// SegmentPrefix defines the filename prefix for segment files.
+	// Prefix defines the filename prefix for segment files.
 	// Final filename will be: prefix + segmentID + extension
 	//
 	// Default: "segment-"
-	SegmentPrefix string
+	Prefix string `json:"prefix"`
 }

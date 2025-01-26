@@ -31,7 +31,7 @@ func Validate(opts *domain.CompressionOptions) error {
 	// Validate compression level (1-9)
 	if opts.Level < FastestLevel || opts.Level > BestLevel {
 		return errors.NewValidationError(
-			"Level",
+			"level",
 			opts.Level,
 			fmt.Errorf("compression level must be between %d and %d, got %d", FastestLevel, BestLevel, opts.Level),
 		)
@@ -40,7 +40,7 @@ func Validate(opts *domain.CompressionOptions) error {
 	// Validate encoder concurrency
 	if opts.EncoderConcurrency > uint8(runtime.NumCPU()) {
 		return errors.NewValidationError(
-			"EncoderConcurrency",
+			"encoderConcurrency",
 			opts.EncoderConcurrency,
 			fmt.Errorf("encoder concurrency must be between 0 and %d, got %d", runtime.NumCPU(), opts.EncoderConcurrency),
 		)
@@ -49,7 +49,7 @@ func Validate(opts *domain.CompressionOptions) error {
 	// Validate decoder concurrency
 	if opts.DecoderConcurrency > uint8(runtime.NumCPU()) {
 		return errors.NewValidationError(
-			"DecoderConcurrency",
+			"decoderConcurrency",
 			opts.DecoderConcurrency,
 			fmt.Errorf("decoder concurrency must be between 0 and %d, got %d", runtime.NumCPU(), opts.DecoderConcurrency),
 		)

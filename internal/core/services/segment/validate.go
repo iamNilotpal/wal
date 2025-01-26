@@ -13,7 +13,7 @@ import (
 func Validate(opts *domain.SegmentOptions) error {
 	if opts.MaxSegmentSize < opts.MinSegmentSize {
 		return errors.NewValidationError(
-			"MaxSegmentSize",
+			"maxSegmentSize",
 			opts.MaxSegmentSize,
 			fmt.Errorf(
 				"MaxSegmentSize (%d) must be greater than MinSegmentSize (%d)", opts.MaxSegmentSize, opts.MinSegmentSize,

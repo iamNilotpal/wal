@@ -62,7 +62,7 @@ func Validate(opts *domain.ChecksumOptions) error {
 		case CRC32IEEE, CRC64ISO, CRC64ECMA, SHA1, SHA256:
 		default:
 			return errors.NewValidationError(
-				"Algorithm", opts.Algorithm, fmt.Errorf("unsupported checksum algorithm: %s", opts.Algorithm),
+				"algorithm", opts.Algorithm, fmt.Errorf("unsupported checksum algorithm: %s", opts.Algorithm),
 			)
 		}
 	}

@@ -17,10 +17,10 @@ func Validate(opts *domain.WALOptions) error {
 	// Check if directory exists and is writable or not.
 	if opts.Directory != "" {
 		if info, err := os.Stat(opts.Directory); err != nil {
-			return errors.NewValidationError("Directory", opts.Directory, fmt.Errorf("invalid directory: %w", err))
+			return errors.NewValidationError("directory", opts.Directory, fmt.Errorf("invalid directory: %w", err))
 		} else if !info.IsDir() {
 			return errors.NewValidationError(
-				"Directory",
+				"directory",
 				opts.Directory,
 				fmt.Errorf("specified path is not a directory: %s", opts.Directory),
 			)
@@ -30,7 +30,7 @@ func Validate(opts *domain.WALOptions) error {
 		tmpFile := filepath.Join(opts.Directory, ".wal_write_test")
 		if f, err := os.Create(tmpFile); err != nil {
 			return errors.NewValidationError(
-				"Directory",
+				"directory",
 				opts.Directory,
 				fmt.Errorf("directory is not writable: %s : %w", opts.Directory, err),
 			)
@@ -42,7 +42,7 @@ func Validate(opts *domain.WALOptions) error {
 
 	if opts.CleanupInterval != 0 && opts.CleanupInterval < time.Second {
 		return errors.NewValidationError(
-			"CleanupInterval",
+			"cleanupInterval",
 			opts.CleanupInterval,
 			fmt.Errorf("cleanup interval must be greater than or equal to 1s, got %s", opts.CleanupInterval),
 		)
@@ -50,7 +50,7 @@ func Validate(opts *domain.WALOptions) error {
 
 	if opts.CompactInterval != 0 && opts.CompactInterval < time.Second {
 		return errors.NewValidationError(
-			"CompactInterval",
+			"compactInterval",
 			opts.CompactInterval,
 			fmt.Errorf("compact interval must be greater than or equal to 1s, got %s", opts.CleanupInterval),
 		)
@@ -58,7 +58,7 @@ func Validate(opts *domain.WALOptions) error {
 
 	if opts.FlushInterval != 0 && opts.FlushInterval < time.Second {
 		return errors.NewValidationError(
-			"FlushInterval",
+			"flushInterval",
 			opts.FlushInterval,
 			fmt.Errorf("flush interval must be greater than or equal to 1s, got %s", opts.FlushInterval),
 		)
@@ -66,7 +66,7 @@ func Validate(opts *domain.WALOptions) error {
 
 	if opts.RetentionDays != 0 && (opts.RetentionDays < 1 || opts.RetentionDays > 365) {
 		return errors.NewValidationError(
-			"RetentionDays",
+			"retentionDays",
 			opts.RetentionDays,
 			fmt.Errorf("retention days must be between 1 and 365, got %d", opts.RetentionDays),
 		)
@@ -74,7 +74,7 @@ func Validate(opts *domain.WALOptions) error {
 
 	if opts.MaxSegmentsKept < opts.MinSegmentsKept {
 		return errors.NewValidationError(
-			"MaxSegmentsKept",
+			"maxSegmentsKept",
 			opts.MaxSegmentsKept,
 			fmt.Errorf(
 				"maxSegmentsKept (%d) must be greater than or equal to minSegmentsKept (%d)",
@@ -107,8 +107,8 @@ func Validate(opts *domain.WALOptions) error {
 		}
 	}
 
-	if opts.PayloadConfig != nil {
-		if err := opts.PayloadConfig.Validate(); err != nil {
+	if opts.PayloadOptions != nil {
+		if err := opts.PayloadOptions.Validate(); err != nil {
 			return err
 		}
 	}
@@ -120,7 +120,7 @@ func validateBufferSize(size uint32) error {
 	// Check minimum size.
 	if size < MinBufferSize {
 		return errors.NewValidationError(
-			"BufferSize",
+			"bufferSize",
 			size,
 			fmt.Errorf("buffer size must be at least 4KB (4096 bytes), got %d bytes", size),
 		)
@@ -129,7 +129,7 @@ func validateBufferSize(size uint32) error {
 	// Check maximum size.
 	if size > MaxBufferSize {
 		return errors.NewValidationError(
-			"BufferSize",
+			"bufferSize",
 			size,
 			fmt.Errorf("buffer size must not exceed 16MB (16777216 bytes), got %d bytes", size),
 		)
@@ -139,7 +139,7 @@ func validateBufferSize(size uint32) error {
 	// This can be helpful for memory alignment and performance.
 	if size&(size-1) != 0 {
 		return errors.NewValidationError(
-			"BufferSize",
+			"bufferSize",
 			size,
 			fmt.Errorf("buffer size must be a power of 2, got %d bytes", size),
 		)

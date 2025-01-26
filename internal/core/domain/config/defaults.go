@@ -1,8 +1,8 @@
 package config
 
 // Returns a PayloadSizeConfig with recommended defaults.
-func DefaultPayloadConfig() *PayloadConfig {
-	return &PayloadConfig{
+func DefaultPayloadConfig() *PayloadOptions {
+	return &PayloadOptions{
 		MinSize: MinPayloadSize,
 		MaxSize: MaxPayloadSize,
 	}

@@ -17,8 +17,8 @@ func (e *validationError) Error() string {
 }
 
 func IsValidationError(err error) bool {
-	var ve validationError
-	return errors.Is(err, &ve)
+	var ve *validationError
+	return errors.As(err, &ve)
 }
 
 func GetValidationError(err error) *validationError {
