@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"time"
 
 	"github.com/iamNilotpal/wal/internal/core/domain"
 	"github.com/iamNilotpal/wal/internal/core/services/wal"
@@ -35,6 +36,210 @@ func main() {
 
 		logger.Sync()
 		os.Exit(1)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	if err := wal.Write(
+		ctx,
+		[]byte(`
+				&domain.WALOptions{
+					RetentionDays:   10,
+					MinSegmentsKept: 10,
+					MaxSegmentsKept: 20,
+					SyncOnFlush:     true,
+					SyncOnWrite:     true,
+					BufferSize:      8192,
+				}
+				&domain.WALOptions{
+					RetentionDays:   10,
+					MinSegmentsKept: 10,
+					MaxSegmentsKept: 20,
+					SyncOnFlush:     true,
+					SyncOnWrite:     true,
+					BufferSize:      8192,
+				}
+				&domain.WALOptions{
+					RetentionDays:   10,
+					MinSegmentsKept: 10,
+					MaxSegmentsKept: 20,
+					SyncOnFlush:     true,
+					SyncOnWrite:     true,
+					BufferSize:      8192,
+				}
+				&domain.WALOptions{
+					RetentionDays:   10,
+					MinSegmentsKept: 10,
+					MaxSegmentsKept: 20,
+					SyncOnFlush:     true,
+					SyncOnWrite:     true,
+					BufferSize:      8192,
+				}
+				&domain.WALOptions{
+					RetentionDays:   10,
+					MinSegmentsKept: 10,
+					MaxSegmentsKept: 20,
+					SyncOnFlush:     true,
+					SyncOnWrite:     true,
+					BufferSize:      8192,
+				}
+				&domain.WALOptions{
+					RetentionDays:   10,
+					MinSegmentsKept: 10,
+					MaxSegmentsKept: 20,
+					SyncOnFlush:     true,
+					SyncOnWrite:     true,
+					BufferSize:      8192,
+				}
+				&domain.WALOptions{
+					RetentionDays:   10,
+					MinSegmentsKept: 10,
+					MaxSegmentsKept: 20,
+					SyncOnFlush:     true,
+					SyncOnWrite:     true,
+					BufferSize:      8192,
+				}
+				&domain.WALOptions{
+					RetentionDays:   10,
+					MinSegmentsKept: 10,
+					MaxSegmentsKept: 20,
+					SyncOnFlush:     true,
+					SyncOnWrite:     true,
+					BufferSize:      8192,
+				}
+				&domain.WALOptions{
+					RetentionDays:   10,
+					MinSegmentsKept: 10,
+					MaxSegmentsKept: 20,
+					SyncOnFlush:     true,
+					SyncOnWrite:     true,
+					BufferSize:      8192,
+				}
+				&domain.WALOptions{
+					RetentionDays:   10,
+					MinSegmentsKept: 10,
+					MaxSegmentsKept: 20,
+					SyncOnFlush:     true,
+					SyncOnWrite:     true,
+					BufferSize:      8192,
+				}
+				&domain.WALOptions{
+					RetentionDays:   10,
+					MinSegmentsKept: 10,
+					MaxSegmentsKept: 20,
+					SyncOnFlush:     true,
+					SyncOnWrite:     true,
+					BufferSize:      8192,
+				}
+				&domain.WALOptions{
+					RetentionDays:   10,
+					MinSegmentsKept: 10,
+					MaxSegmentsKept: 20,
+					SyncOnFlush:     true,
+					SyncOnWrite:     true,
+					BufferSize:      8192,
+				}
+				&domain.WALOptions{
+					RetentionDays:   10,
+					MinSegmentsKept: 10,
+					MaxSegmentsKept: 20,
+					SyncOnFlush:     true,
+					SyncOnWrite:     true,
+					BufferSize:      8192,
+				}
+				&domain.WALOptions{
+					RetentionDays:   10,
+					MinSegmentsKept: 10,
+					MaxSegmentsKept: 20,
+					SyncOnFlush:     true,
+					SyncOnWrite:     true,
+					BufferSize:      8192,
+				}
+				&domain.WALOptions{
+					RetentionDays:   10,
+					MinSegmentsKept: 10,
+					MaxSegmentsKept: 20,
+					SyncOnFlush:     true,
+					SyncOnWrite:     true,
+					BufferSize:      8192,
+				}
+				&domain.WALOptions{
+					RetentionDays:   10,
+					MinSegmentsKept: 10,
+					MaxSegmentsKept: 20,
+					SyncOnFlush:     true,
+					SyncOnWrite:     true,
+					BufferSize:      8192,
+				}
+				&domain.WALOptions{
+					RetentionDays:   10,
+					MinSegmentsKept: 10,
+					MaxSegmentsKept: 20,
+					SyncOnFlush:     true,
+					SyncOnWrite:     true,
+					BufferSize:      8192,
+				}
+				&domain.WALOptions{
+					RetentionDays:   10,
+					MinSegmentsKept: 10,
+					MaxSegmentsKept: 20,
+					SyncOnFlush:     true,
+					SyncOnWrite:     true,
+					BufferSize:      8192,
+				}
+				&domain.WALOptions{
+					RetentionDays:   10,
+					MinSegmentsKept: 10,
+					MaxSegmentsKept: 20,
+					SyncOnFlush:     true,
+					SyncOnWrite:     true,
+					BufferSize:      8192,
+				}
+				&domain.WALOptions{
+					RetentionDays:   10,
+					MinSegmentsKept: 10,
+					MaxSegmentsKept: 20,
+					SyncOnFlush:     true,
+					SyncOnWrite:     true,
+					BufferSize:      8192,
+				}
+				&domain.WALOptions{
+					RetentionDays:   10,
+					MinSegmentsKept: 10,
+					MaxSegmentsKept: 20,
+					SyncOnFlush:     true,
+					SyncOnWrite:     true,
+					BufferSize:      8192,
+				}
+				&domain.WALOptions{
+					RetentionDays:   10,
+					MinSegmentsKept: 10,
+					MaxSegmentsKept: 20,
+					SyncOnFlush:     true,
+					SyncOnWrite:     true,
+					BufferSize:      8192,
+				}
+				&domain.WALOptions{
+					RetentionDays:   10,
+					MinSegmentsKept: 10,
+					MaxSegmentsKept: 20,
+					SyncOnFlush:     true,
+					SyncOnWrite:     true,
+					BufferSize:      8192,
+				}
+				&domain.WALOptions{
+					RetentionDays:   10,
+					MinSegmentsKept: 10,
+					MaxSegmentsKept: 20,
+					SyncOnFlush:     true,
+					SyncOnWrite:     true,
+					BufferSize:      8192,
+				}
+	`),
+		true,
+	); err != nil {
+		logger.Infow("create wal error", "error", err)
 	}
 
 	if err := wal.Close(context.Background()); err != nil {

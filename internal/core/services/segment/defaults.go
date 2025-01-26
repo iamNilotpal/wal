@@ -15,7 +15,8 @@ const (
 	MaxSegmentSize = 67108864                      // 64MB
 
 	MinBufferAvailablePercent = 25
-	FlushTimeout              = 5 * time.Second
+	WriteTimeout              = 1 * time.Second
+	MaxWriteTimeout           = 10 * time.Second
 )
 
 // DefaultOptions returns a SegmentOptions struct with recommended defaults.

@@ -15,7 +15,7 @@ const (
 	// MaxPayloadSize defines the absolute maximum size for a single log entry.
 	// This limit helps prevent memory exhaustion and ensures consistent
 	// performance characteristics across the system.
-	MaxPayloadSize = 83_88_560 // 7.99MB. (header + payload = 8MB)
+	MaxPayloadSize = 8388608 - 48 // 7.99MB. (header + payload = 8MB)
 
 	// Batch processing thresholds define how multiple log entries are grouped
 	// together for improved I/O efficiency.
@@ -37,7 +37,7 @@ const (
 	// CompressionThreshold determines when to apply compression.
 	// Entries larger than this size are candidates for compression,
 	// balancing CPU overhead against storage and bandwidth savings.
-	CompressionThreshold = 4 * 1024 // 64KB.
+	CompressionThreshold = 64 * 1024 // 64KB.
 
 	// Version numbers for backwards compatibility control.
 	// Version checking ensures that:

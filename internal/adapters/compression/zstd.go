@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	"github.com/iamNilotpal/wal/internal/core/domain"
-	"github.com/iamNilotpal/wal/internal/core/domain/config"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -84,10 +83,6 @@ func NewZstdCompression(opts Options) (*ZstdCompression, error) {
 func (z *ZstdCompression) Compress(data []byte) ([]byte, error) {
 	z.mu.RLock()
 	defer z.mu.RUnlock()
-
-	if len(data) < config.CompressionThreshold {
-		return data, nil
-	}
 
 	compressed := z.encoder.EncodeAll(data, nil)
 	if len(compressed) < len(data) {

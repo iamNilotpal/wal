@@ -83,6 +83,22 @@ func Validate(opts *domain.WALOptions) error {
 		)
 	}
 
+	if opts.WriteTimeout < 0 {
+		return errors.NewValidationError(
+			"writeTimeout",
+			opts.MaxSegmentsKept,
+			fmt.Errorf("writeTimeout must be positive, got %s", opts.WriteTimeout),
+		)
+	}
+
+	if opts.WriteTimeout != 0 && opts.WriteTimeout < segment.MaxWriteTimeout {
+		return errors.NewValidationError(
+			"writeTimeout",
+			opts.MaxSegmentsKept,
+			fmt.Errorf("writeTimeout must be less than or equal to %s, got %s", segment.MaxWriteTimeout, opts.WriteTimeout),
+		)
+	}
+
 	if opts.BufferSize != 0 {
 		if err := validateBufferSize(opts.BufferSize); err != nil {
 			return err

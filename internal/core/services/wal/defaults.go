@@ -60,6 +60,14 @@ func prepareDefaults(opts *domain.WALOptions) *domain.WALOptions {
 		opts.RetentionDays = RetentionDays
 	}
 
+	if opts.WriteTimeout == 0 {
+		opts.WriteTimeout = segment.WriteTimeout
+	}
+
+	if opts.WriteTimeout != 0 && opts.WriteTimeout > segment.WriteTimeout {
+		opts.WriteTimeout = segment.MaxWriteTimeout
+	}
+
 	if strings.TrimSpace(opts.Directory) == "" {
 		opts.Directory = Directory
 	}

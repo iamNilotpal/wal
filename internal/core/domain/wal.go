@@ -41,7 +41,7 @@ type WALOptions struct {
 	// Files older than this will be automatically deleted during maintenance.
 	// Must be between 1 and 365.
 	//
-	// Default: 7 Days
+	// Default: 7d
 	RetentionDays uint16 `json:"retentionDays"`
 
 	// MinSegmentsKept sets the minimum number of segments to retain,
@@ -62,22 +62,34 @@ type WALOptions struct {
 	// old segments exceeding retention limits. More frequent cleanup
 	// means more consistent space usage but higher overhead.
 	//
-	// Default: 15 minutes
+	// Default: 15m
 	CleanupInterval time.Duration `json:"cleanupInterval"`
 
 	// CompactInterval defines how often the compaction process runs to
 	// merge smaller segments. More frequent compaction means more
 	// optimal storage but higher overhead.
 	//
-	// Default: 1 hour
+	// Default: 1h
 	CompactInterval time.Duration `json:"compactInterval"`
 
 	// FlushInterval determines how often buffered data is written to disk.
 	// Shorter intervals reduce data loss risk but impact performance.
 	// Longer intervals improve performance but increase risk of data loss.
 	//
-	// Default: 5 seconds
+	// Default: 5s
 	FlushInterval time.Duration `json:"flushInterval"`
+
+	// WriteTimeout specifies the maximum duration allowed for a single write
+	// operation to complete. If a write takes longer than this timeout, it will
+	// be aborted and return an error. Helps prevent system hangs from slow writes
+	// or I/O issues.
+	//
+	// Should be set based on storage system performance characteristics and
+	// expected write sizes. Too low may cause spurious timeouts under load.
+	// Too high may delay error detection for failing storage.
+	//
+	// Default: 1s
+	WriteTimeout time.Duration `json:"writeTimeout"`
 
 	// ChecksumOptions configures data integrity verification including
 	// algorithm selection, verification frequency and error handling.

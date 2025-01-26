@@ -351,7 +351,7 @@ func (s *Segment) Write(ctx context.Context, record *Record, sync bool) error {
 
 	// Set up a timeout context for the flush operation
 	// This prevents potentially infinite blocking on I/O operations
-	ctx, cancel := context.WithTimeout(ctx, segment.FlushTimeout)
+	ctx, cancel := context.WithTimeout(ctx, segment.WriteTimeout)
 	defer cancel()
 
 	return system.RunWithContext(ctx, func(ctx context.Context) error {
@@ -706,7 +706,7 @@ func (s *Segment) prepareEntry(record *Record) (*domain.Entry, []byte, error) {
 	}
 
 	// Optional compression to reduce storage size.
-	if s.options.CompressionOptions.Enable {
+	if s.options.CompressionOptions.Enable && len(encoded) > config.CompressionThreshold {
 		encoded, err = s.compressEntry(encoded)
 		if err != nil {
 			return nil, nil, err
