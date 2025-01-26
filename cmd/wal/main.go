@@ -21,7 +21,7 @@ func main() {
 		MaxSegmentsKept: 20,
 		SyncOnFlush:     true,
 		SyncOnWrite:     true,
-		BufferSize:      8192,
+		BufferSize:      8191,
 	})
 
 	if err != nil {
