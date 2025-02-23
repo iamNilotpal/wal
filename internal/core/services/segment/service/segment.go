@@ -285,6 +285,95 @@ func (s *Segment) Write(ctx context.Context, record *Record, sync bool) error {
 	})
 }
 
+// ReadAt reads an entry from the segment file at the specified offset.
+// It handles file seeking, reading, decompression (if enabled), and validation of the entry.
+// The method is designed to be context-aware, allowing for cancellation or timeout via the provided context.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout control.
+//   - offset: The byte offset in the segment file where the entry is located.
+//
+// Returns:
+//   - *domain.Entry: The deserialized entry read from the file.
+//   - error: An error if any step in the process fails, such as file seeking, reading, decompression, or validation.
+func (s *Segment) ReadAt(ctx context.Context, offset int64) (*domain.Entry, error) {
+	var entry *domain.Entry
+
+	if err := system.RunWithContext(ctx, func(ctx context.Context) error {
+		if s.closed.Load() {
+			return ErrSegmentClosed
+		}
+
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		// Seek to the specified offset in the file.
+		if _, err := s.file.Seek(offset, io.SeekStart); err != nil {
+			return fmt.Errorf("failed to seek file : %w", err)
+		}
+		// Ensure the file pointer is reset to the end after reading.
+		defer s.file.Seek(0, io.SeekEnd)
+
+		// Read the entry header from the file.
+		var header domain.EntryHeader
+		if err := binary.Read(s.file, binary.LittleEndian, &header); err != nil {
+			return fmt.Errorf("failed to read header : %w", err)
+		}
+
+		// Get a buffer from the buffer pool to hold the payload.
+		buffer := s.bufferPool.Get()
+		defer s.bufferPool.Put(buffer)
+
+		// Calculate the total size of the entry (header + payload).
+		totalSize := int(header.PayloadSize + uint32(binary.Size(header)))
+
+		// Ensure the buffer has sufficient capacity.
+		if buffer.Cap() < totalSize {
+			buffer.Grow(totalSize)
+		}
+
+		entry.Header = &header
+		payload := buffer.Bytes()
+
+		// Read the payload from the file into the buffer.
+		if nn, err := s.file.Read(payload); err != nil {
+			return fmt.Errorf("failed to read file : %w", err)
+		} else if nn < totalSize {
+			return fmt.Errorf("partial read, %d != %d", totalSize, nn)
+		}
+
+		// If compression is enabled and the payload size exceeds the threshold, decompress the payload.
+		if s.options.CompressionOptions.Enable && len(payload) > config.CompressionThreshold {
+			decompressedPayload, err := s.compressor.Decompress(payload)
+			if err != nil {
+				return fmt.Errorf("failed decompress data : %w", err)
+			}
+
+			if nn, err := buffer.Write(decompressedPayload); err != nil {
+				return fmt.Errorf("failed to read file : %w", err)
+			} else if nn < len(decompressedPayload) {
+				return fmt.Errorf("partial read, %d != %d", len(decompressedPayload), nn)
+			}
+		}
+
+		// Deserialize the entry from the buffer using protocol buffers.
+		if err := entry.UnMarshalProto(buffer.Bytes()); err != nil {
+			return fmt.Errorf("failed to unmarshal : %w", err)
+		}
+
+		// Validate the entry to ensure it meets required criteria.
+		if err := entry.Validate(); err != nil {
+			return fmt.Errorf("invalid entry : %w", err)
+		}
+
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	return entry, nil
+}
+
 // Rotate creates a new segment and closes the current one,
 // managing the transition between log segments.
 //

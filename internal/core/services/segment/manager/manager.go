@@ -123,6 +123,21 @@ func NewSegmentManager(ctx context.Context, opts *domain.WALOptions) (*SegmentMa
 	return sm, nil
 }
 
+// ReadAt reads an entry from the segment at the specified offset.
+// This method delegates the read operation to the underlying segment, ensuring
+// proper data retrieval while maintaining abstraction at the SegmentManager level.
+//
+// Parameters:
+//   - ctx: Context for managing request lifecycle, supporting cancellation and timeouts.
+//   - offset: The byte offset in the segment file from which to read the entry.
+//
+// Returns:
+//   - *domain.Entry: A pointer to the retrieved entry if the operation succeeds.
+//   - error: An error if the read operation fails.
+func (sm *SegmentManager) ReadAt(ctx context.Context, offset int64) (*domain.Entry, error) {
+	return sm.segment.ReadAt(ctx, offset)
+}
+
 // Write creates a new record with the provided data and writes it to the current segment.
 // It wraps the raw data in a Record structure with a normal entry type before writing.
 func (sm *SegmentManager) Write(context context.Context, data []byte, sync bool) error {

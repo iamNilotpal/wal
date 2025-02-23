@@ -102,6 +102,21 @@ func New(ctx context.Context, opts *domain.WALOptions) (*WAL, error) {
 	return wal, nil
 }
 
+// ReadAt retrieves an entry from the Write-Ahead Log (WAL) at the specified offset.
+// This method reads an entry stored in the WAL at the given byte offset. It ensures
+// data integrity by verifying the read operation and handling potential failures.
+//
+// Parameters:
+//   - ctx: Context for managing request lifecycle, supporting cancellation and timeouts.
+//   - offset: The byte offset in the WAL from which to read the entry.
+//
+// Returns:
+//   - *domain.Entry: A pointer to the retrieved entry if the operation is successful.
+//   - error: Returns an error if fails.
+func (wal *WAL) ReadAt(ctx context.Context, offset int64) (*domain.Entry, error) {
+	return wal.sm.ReadAt(ctx, offset)
+}
+
 // Writes an entry containing the provided data bytes to the active segment. The context
 // allows cancellation of long-running writes. Each write is atomic and sequential,
 // maintaining the WAL's ordering guarantees.
