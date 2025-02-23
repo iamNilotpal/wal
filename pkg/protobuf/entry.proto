@@ -8,73 +8,73 @@ option go_package = "github.com/iamNilotpal/wal;pb";
 // EntryType defines the different types of entries that can appear in the WAL.
 // Each type serves a specific purpose in the WAL's operation and recovery process.
 enum EntryType {
-    // Default zero value as required by proto3.
-    // This should never appear in actual entries.
-    ENTRY_TYPE_UNSPECIFIED = 0;
+  // Default zero value as required by proto3.
+  // This should never appear in actual entries.
+  ENTRY_TYPE_UNSPECIFIED = 0;
 
-    // Normal data entry containing user payload.
-    // These form the majority of entries and contain actual data modifications.
-    ENTRY_TYPE_NORMAL = 1;
+  // Normal data entry containing user payload.
+  // These form the majority of entries and contain actual data modifications.
+  ENTRY_TYPE_NORMAL = 1;
 
-    // Checkpoint entries mark consistent states in the WAL.
-    // Used during recovery to find safe starting points and avoid replaying the entire log.
-    // Contains metadata about the checkpoint state.
-    ENTRY_TYPE_CHECKPOINT = 2;
+  // Checkpoint entries mark consistent states in the WAL.
+  // Used during recovery to find safe starting points and avoid replaying the entire log.
+  // Contains metadata about the checkpoint state.
+  ENTRY_TYPE_CHECKPOINT = 2;
 
-    // Rotation entries indicate the start of a new segment.
-    // Written when the WAL rotates to a new file.
-    // Contains metadata about the old and new segments.
-    ENTRY_TYPE_ROTATION = 3;
+  // Rotation entries indicate the start of a new segment.
+  // Written when the WAL rotates to a new file.
+  // Contains metadata about the old and new segments.
+  ENTRY_TYPE_ROTATION = 3;
 
-    // Marks entries that use compression.
-    // The compression algorithm and level are specified in the header.
-    // Used to optimize storage space.
-    ENTRY_TYPE_COMPRESSED = 4;
+  // Marks entries that use compression.
+  // The compression algorithm and level are specified in the header.
+  // Used to optimize storage space.
+  ENTRY_TYPE_COMPRESSED = 4;
 
-    // System-level metadata entries.
-    // Used for WAL management, configuration changes, and administrative data.
-    // Not part of the user data stream.
-    ENTRY_TYPE_METADATA = 5;
+  // System-level metadata entries.
+  // Used for WAL management, configuration changes, and administrative data.
+  // Not part of the user data stream.
+  ENTRY_TYPE_METADATA = 5;
 
-   // Segment header entries mark the beginning of a new WAL segment.
-    // Contains initialization data like version, creation timestamp, and segment sequence number.
-    // Required for segment validation and recovery.
-    ENTRY_TYPE_SEGMENT_HEADER = 6;
+  // Segment header entries mark the beginning of a new WAL segment.
+  // Contains initialization data like version, creation timestamp, and segment sequence number.
+  // Required for segment validation and recovery.
+  ENTRY_TYPE_SEGMENT_HEADER = 6;
 
-    // Segment finalize entries mark a segment as complete and ready for archival.
-    // Contains summary information like entry counts and checksums.
-    // Used to verify segment integrity during recovery.
-    ENTRY_TYPE_SEGMENT_FINALIZE = 7;
+  // Segment finalize entries mark a segment as complete and ready for archival.
+  // Contains summary information like entry counts and checksums.
+  // Used to verify segment integrity during recovery.
+  ENTRY_TYPE_SEGMENT_FINALIZE = 7;
 }
 
 // Contains per-entry metadata to support durability,
 // recovery, and debugging capabilities. This metadata is critical for
 // maintaining log integrity and enabling efficient log operations.
 message PayloadMetadata {
-    // Used to detect corruption and ensure data integrity.
-    uint64 checksum = 1;
+  // Used to detect corruption and ensure data integrity.
+  uint64 checksum = 1;
 
-    // Offset of the previous entry in the log.
-    // Enables backward traversal and helps in recovery.
-    uint64 prevOffset = 2;
+  // Offset of the previous entry in the log.
+  // Enables backward traversal and helps in recovery.
+  uint64 prevOffset = 2;
 
-    // Unix timestamp in nanoseconds when the entry was created.
-    // Used for time-based recovery and debugging.
-    int64 timestamp = 3;
+  // Unix timestamp in nanoseconds when the entry was created.
+  // Used for time-based recovery and debugging.
+  int64 timestamp = 3;
 
-    // Type of the entry, determining how it should be processed.
-    // See EntryType enum for possible values.
-    EntryType type = 4;
+  // Type of the entry, determining how it should be processed.
+  // See EntryType enum for possible values.
+  EntryType type = 4;
 }
 
 // Entry represents a complete WAL entry including its header and payload.
 // This is the fundamental unit of storage in the WAL.
 message Entry {
-    // Metadata points to additional information about this payload
+  // Metadata points to additional information about this payload
 	// including timestamps, checksums, and traversal pointers.
-    PayloadMetadata metadata = 1;
+  PayloadMetadata metadata = 1;
 
-    // Actual data payload of the entry.
-    // Variable-length byte array containing the data to be written.
-    bytes payload = 2;
+  // Actual data payload of the entry.
+  // Variable-length byte array containing the data to be written.
+  bytes payload = 2;
 }
