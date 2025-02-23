@@ -57,7 +57,7 @@ type SegmentManager struct {
 //   - Cannot determine the latest segment ID.
 //   - Loading/creating the active segment fails.
 func NewSegmentManager(ctx context.Context, opts *domain.WALOptions) (*SegmentManager, error) {
-	var sm *SegmentManager
+	sm := &SegmentManager{}
 
 	if err := system.RunWithContext(ctx, func(ctx context.Context) error {
 		select {

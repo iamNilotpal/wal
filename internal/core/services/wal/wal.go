@@ -27,7 +27,7 @@ type WAL struct {
 // Creates a new Write-Ahead Log (WAL) instance with the provided options.
 // If no options are provided, default values will be used.
 func New(ctx context.Context, opts *domain.WALOptions) (*WAL, error) {
-	var wal *WAL
+	wal := &WAL{}
 
 	if err := system.RunWithContext(ctx, func(ctx context.Context) error {
 		select {
@@ -60,7 +60,7 @@ func New(ctx context.Context, opts *domain.WALOptions) (*WAL, error) {
 				path := filepath.Join(opts.Directory, "meta.json")
 
 				_, err = os.Stat(path)
-				if err != nil {
+				if err != nil && !os.IsNotExist(err) {
 					return fmt.Errorf("error in getting file stat %s because of %v", path, err)
 				}
 

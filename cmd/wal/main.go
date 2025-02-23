@@ -26,6 +26,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := wal.Write(
+		context.Background(),
+		[]byte(`wal.Write(context.Background(), []byte("This is first WAL segment"), true)`),
+		true,
+	); err != nil {
+		logger.Infow("write error", "error", err)
+	}
+
+	data, err := wal.ReadAt(context.Background(), 44)
+	if err != nil {
+		logger.Error("read error", err)
+	} else {
+		logger.Infow("entry data", "data", data)
+	}
+
 	if err := wal.Close(context.Background()); err != nil {
 		logger.Infow("error closing wal", "error", err)
 	}

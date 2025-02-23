@@ -28,7 +28,7 @@ var (
 
 // NewSegment creates or opens a new log segment.
 func NewSegment(ctx context.Context, config *Config) (*Segment, error) {
-	var segment *Segment
+	segment := &Segment{}
 
 	if err := system.RunWithContext(ctx, func(ctx context.Context) error {
 		select {
@@ -297,35 +297,35 @@ func (s *Segment) Write(ctx context.Context, record *Record, sync bool) error {
 //   - *domain.Entry: The deserialized entry read from the file.
 //   - error: An error if any step in the process fails, such as file seeking, reading, decompression, or validation.
 func (s *Segment) ReadAt(ctx context.Context, offset int64) (*domain.Entry, error) {
-	var entry *domain.Entry
+	entry := &domain.Entry{}
 
 	if err := system.RunWithContext(ctx, func(ctx context.Context) error {
 		if s.closed.Load() {
 			return ErrSegmentClosed
 		}
 
-		s.mu.Lock()
-		defer s.mu.Unlock()
+		s.mu.RLock()
+		defer s.mu.RUnlock()
 
-		// Seek to the specified offset in the file.
-		if _, err := s.file.Seek(offset, io.SeekStart); err != nil {
-			return fmt.Errorf("failed to seek file : %w", err)
-		}
-		// Ensure the file pointer is reset to the end after reading.
-		defer s.file.Seek(0, io.SeekEnd)
+		// Create bounded reader to prevent large allocations.
+		reader := io.NewSectionReader(s.file, offset, int64(s.options.PayloadOptions.MaxSize))
 
 		// Read the entry header from the file.
 		var header domain.EntryHeader
-		if err := binary.Read(s.file, binary.LittleEndian, &header); err != nil {
+		if err := binary.Read(reader, binary.LittleEndian, &header); err != nil {
 			return fmt.Errorf("failed to read header : %w", err)
+		}
+
+		// Validate header before allocation.
+		if err := header.Validate(); err != nil {
+			return err
 		}
 
 		// Get a buffer from the buffer pool to hold the payload.
 		buffer := s.bufferPool.Get()
 		defer s.bufferPool.Put(buffer)
 
-		// Calculate the total size of the entry (header + payload).
-		totalSize := int(header.PayloadSize + uint32(binary.Size(header)))
+		totalSize := int(header.PayloadSize)
 
 		// Ensure the buffer has sufficient capacity.
 		if buffer.Cap() < totalSize {
@@ -333,10 +333,10 @@ func (s *Segment) ReadAt(ctx context.Context, offset int64) (*domain.Entry, erro
 		}
 
 		entry.Header = &header
-		payload := buffer.Bytes()
+		payload := buffer.Bytes()[:totalSize]
 
 		// Read the payload from the file into the buffer.
-		if nn, err := s.file.Read(payload); err != nil {
+		if nn, err := io.ReadFull(reader, payload); err != nil {
 			return fmt.Errorf("failed to read file : %w", err)
 		} else if nn < totalSize {
 			return fmt.Errorf("partial read, %d != %d", totalSize, nn)
@@ -348,25 +348,10 @@ func (s *Segment) ReadAt(ctx context.Context, offset int64) (*domain.Entry, erro
 			if err != nil {
 				return fmt.Errorf("failed decompress data : %w", err)
 			}
-
-			if nn, err := buffer.Write(decompressedPayload); err != nil {
-				return fmt.Errorf("failed to read file : %w", err)
-			} else if nn < len(decompressedPayload) {
-				return fmt.Errorf("partial read, %d != %d", len(decompressedPayload), nn)
-			}
+			payload = decompressedPayload
 		}
 
-		// Deserialize the entry from the buffer using protocol buffers.
-		if err := entry.UnMarshalProto(buffer.Bytes()); err != nil {
-			return fmt.Errorf("failed to unmarshal : %w", err)
-		}
-
-		// Validate the entry to ensure it meets required criteria.
-		if err := entry.Validate(); err != nil {
-			return fmt.Errorf("invalid entry : %w", err)
-		}
-
-		return nil
+		return entry.UnMarshalProto(payload)
 	}); err != nil {
 		return nil, err
 	}
@@ -644,7 +629,10 @@ func (s *Segment) shouldFlushBuffer(additionalBytes int) bool {
 func (s *Segment) prepareEntry(record *Record) (*domain.Entry, []byte, error) {
 	// Create a new Entry structure with metadata.
 	entry := &domain.Entry{
-		Header: &domain.EntryHeader{Version: config.MaxVersion, Sequence: s.nextLogSequence},
+		Header: &domain.EntryHeader{
+			Version:  config.MaxVersion,
+			Sequence: s.nextLogSequence,
+		},
 		Payload: &domain.EntryPayload{
 			Payload: record.Payload,
 			Metadata: &domain.PayloadMetadata{

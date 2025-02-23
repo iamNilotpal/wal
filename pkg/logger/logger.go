@@ -23,10 +23,7 @@ func New(service string, outputPaths ...string) *zap.SugaredLogger {
 		EncoderConfig:     encoderCfg,
 		OutputPaths:       []string{"stderr"},
 		ErrorOutputPaths:  []string{"stderr"},
-		InitialFields: map[string]interface{}{
-			"service": service,
-			"pid":     os.Getpid(),
-		},
+		InitialFields:     map[string]any{"service": service, "pid": os.Getpid()},
 	}
 
 	if outputPaths != nil || len(outputPaths) != 0 {
