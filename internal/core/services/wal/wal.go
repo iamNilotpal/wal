@@ -4,14 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 
-	"github.com/iamNilotpal/wal/internal/adapters/fs"
 	"github.com/iamNilotpal/wal/internal/core/domain"
-	"github.com/iamNilotpal/wal/internal/core/ports"
 	sm "github.com/iamNilotpal/wal/internal/core/services/segment/manager"
 	segment "github.com/iamNilotpal/wal/internal/core/services/segment/service"
 	"github.com/iamNilotpal/wal/pkg/errors"
+	"github.com/iamNilotpal/wal/pkg/system"
 )
 
 // WAL implements a Write-Ahead Log for durability and crash recovery.
@@ -20,64 +20,86 @@ import (
 // sequential logging and supports crash recovery.
 type WAL struct {
 	// Core components and configuration
-	options *domain.WALOptions   // Configuration controlling WAL behavior.
-	sm      *sm.SegmentManager   // Handles segment lifecycle and maintenance.
-	fs      ports.FileSystemPort // Local file system access.
-
-	// Lifecycle and concurrency control
-	ctx    context.Context    // Controls the WAL's operational lifecycle
-	cancel context.CancelFunc // Triggers graceful shutdown of WAL operations
+	options *domain.WALOptions // Configuration controlling WAL behavior.
+	sm      *sm.SegmentManager // Handles segment lifecycle and maintenance.
 }
 
 // Creates a new Write-Ahead Log (WAL) instance with the provided options.
 // If no options are provided, default values will be used.
-func New(opts *domain.WALOptions) (*WAL, error) {
-	// Validate options if provided
-	if opts != nil {
-		if err := Validate(opts); err != nil {
-			return nil, err
+func New(ctx context.Context, opts *domain.WALOptions) (*WAL, error) {
+	var wal *WAL
+
+	if err := system.RunWithContext(ctx, func(ctx context.Context) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			{
+				// Validate options if provided
+				if opts != nil {
+					if err := Validate(opts); err != nil {
+						return err
+					}
+				}
+
+				// Set default options if not provided or merge defaults with provided options
+				if opts != nil {
+					opts = prepareDefaults(opts)
+				} else {
+					opts = prepareDefaults(&domain.WALOptions{})
+				}
+
+				// Initialize the segment manager which handles the underlying segments
+				sm, err := sm.NewSegmentManager(ctx, opts)
+				if err != nil {
+					return err
+				}
+
+				wal.sm = sm
+				wal.options = opts
+				path := filepath.Join(opts.Directory, "meta.json")
+
+				_, err = os.Stat(path)
+				if err != nil {
+					return fmt.Errorf("error in getting file stat %s because of %v", path, err)
+				}
+
+				metaFile, err := os.Create(path)
+				if err != nil {
+					if err := wal.Close(ctx); err != nil {
+						return err
+					}
+					return fmt.Errorf("error creating meta.json file : %w", err)
+				}
+
+				data, err := json.Marshal(opts)
+				if err != nil {
+					if err := wal.Close(ctx); err != nil {
+						return err
+					}
+					return fmt.Errorf("error marshalling options : %w", err)
+				}
+
+				if n, err := metaFile.Write(data); err != nil {
+					if err := wal.Close(ctx); err != nil {
+						return err
+					}
+					return fmt.Errorf("failed to write meta.json file : %w", err)
+				} else if n < len(data) {
+					if err := wal.Close(ctx); err != nil {
+						return err
+					}
+					return fmt.Errorf("failed to write meta.json file : %w", err)
+				}
+
+				return nil
+			}
 		}
-	}
-
-	// Set default options if not provided or merge defaults with provided options
-	if opts != nil {
-		opts = prepareDefaults(opts)
-	} else {
-		opts = prepareDefaults(&domain.WALOptions{})
-	}
-
-	// Create a cancellable context for managing WAL lifecycle
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// Initialize the segment manager which handles the underlying segments
-	sm, err := sm.NewSegmentManager(ctx, opts)
-	if err != nil {
-		cancel() // Clean up context if segment manager creation fails
+	}); err != nil {
 		return nil, err
 	}
 
-	fs := fs.NewLocalFileSystem()
-	metaFile, err := fs.CreateFile(filepath.Join(opts.Directory, "meta.json"), true)
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("error creating meta.json file : %w", err)
-	}
-
-	data, err := json.Marshal(opts)
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("error marshalling options : %w", err)
-	}
-
-	if n, err := metaFile.Write(data); err != nil {
-		cancel()
-		return nil, fmt.Errorf("failed to write meta.json file : %w", err)
-	} else if n < len(data) {
-		cancel()
-		return nil, fmt.Errorf("failed to write meta.json file : %w", err)
-	}
-
-	return &WAL{fs: fs, sm: sm, ctx: ctx, options: opts, cancel: cancel}, nil
+	return wal, nil
 }
 
 // Writes an entry containing the provided data bytes to the active segment. The context
@@ -131,20 +153,23 @@ func (wal *WAL) SegmentInfo() (*segment.SegmentInfo, error) {
 // Gracefully shuts down the WAL by cancelling ongoing operations and ensuring all segments
 // are properly closed and synced to disk. This prevents data corruption from improper shutdown.
 func (wal *WAL) Close(context context.Context) error {
-	wal.cancel()
 	return wal.sm.Close(context)
 }
 
 func (wal *WAL) validateSize(size uint32) error {
 	if size < wal.options.PayloadOptions.MinSize {
 		return errors.NewValidationError(
-			"payloadSize", size, fmt.Errorf("invalid payload size, expected %d got %d", wal.options.PayloadOptions.MinSize, size),
+			"payloadSize",
+			size,
+			fmt.Errorf("invalid payload size, expected %d got %d", wal.options.PayloadOptions.MinSize, size),
 		)
 	}
 
 	if size > wal.options.PayloadOptions.MaxSize {
 		return errors.NewValidationError(
-			"payloadSize", size, fmt.Errorf("invalid payload size, expected %d got %d", wal.options.PayloadOptions.MaxSize, size),
+			"payloadSize",
+			size,
+			fmt.Errorf("invalid payload size, expected %d got %d", wal.options.PayloadOptions.MaxSize, size),
 		)
 	}
 

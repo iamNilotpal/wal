@@ -17,6 +17,7 @@ import (
 	"github.com/iamNilotpal/wal/internal/core/domain"
 	"github.com/iamNilotpal/wal/internal/core/ports"
 	segment "github.com/iamNilotpal/wal/internal/core/services/segment/service"
+	"github.com/iamNilotpal/wal/pkg/system"
 )
 
 // SegmentManager handles the lifecycle of log segments, including creation,
@@ -56,56 +57,70 @@ type SegmentManager struct {
 //   - Cannot determine the latest segment ID.
 //   - Loading/creating the active segment fails.
 func NewSegmentManager(ctx context.Context, opts *domain.WALOptions) (*SegmentManager, error) {
-	fs := fs.NewLocalFileSystem()
-	ctx, cancel := context.WithCancel(ctx)
+	var sm *SegmentManager
 
-	sm := SegmentManager{
-		fs:            fs,
-		ctx:           ctx,
-		opts:          opts,
-		cancel:        cancel,
-		cleanupTicker: time.NewTicker(opts.CleanupInterval),
-		compactTicker: time.NewTicker(opts.CompactInterval),
-	}
+	if err := system.RunWithContext(ctx, func(ctx context.Context) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			{
+				fs := fs.NewLocalFileSystem()
+				ctx, cancel := context.WithCancel(ctx)
 
-	// Ensure segment directory exists with proper permissions (0755)
-	// Directory is created recursively if it doesn't exist.
-	path := filepath.Join(opts.Directory, opts.SegmentOptions.Directory)
-	if err := sm.fs.CreateDir(path, 0755, true); err != nil {
+				sm.fs = fs
+				sm.ctx = ctx
+				sm.opts = opts
+				sm.cancel = cancel
+				sm.cleanupTicker = time.NewTicker(opts.CleanupInterval)
+				sm.compactTicker = time.NewTicker(opts.CompactInterval)
+
+				// Ensure segment directory exists with proper permissions (0755)
+				// Directory is created recursively if it doesn't exist.
+				path := filepath.Join(opts.Directory, opts.SegmentOptions.Directory)
+				if err := sm.fs.CreateDir(path, 0755, true); err != nil {
+					cancel()
+					return err
+				}
+
+				// Find the highest segment ID from existing segment files
+				// This ensures we continue from the last valid segment.
+				segmentId, err := sm.getLatestSegmentId()
+				if err != nil {
+					cancel()
+					return err
+				}
+
+				// Scan the latest segment to determine the next sequence ID
+				// and total number of entries for continuity.
+				sequenceId, totalEntries, offset, err := sm.scanSegmentMetadata(segmentId)
+				if err != nil {
+					cancel()
+					return err
+				}
+
+				// Either load existing segment or create new one based on discovered metadata.
+				if err := sm.loadOrCreateSegment(segmentId, sequenceId, totalEntries, offset); err != nil {
+					return err
+				}
+
+				// Registers a callback on the active segment to maintain segment
+				// references when rotation occurs. This ensures the SegmentManager
+				// always points to the most recent active segment.
+				sm.segment.RegisterRotationHandler(func(segment *segment.Segment) {
+					sm.mu.Lock()
+					sm.segment = segment
+					sm.mu.Unlock()
+				})
+
+				return nil
+			}
+		}
+	}); err != nil {
 		return nil, err
 	}
 
-	// Find the highest segment ID from existing segment files
-	// This ensures we continue from the last valid segment.
-	segmentId, err := sm.getLatestSegmentId()
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-
-	// Scan the latest segment to determine the next sequence ID
-	// and total number of entries for continuity.
-	sequenceId, totalEntries, err := sm.scanSegmentMetadata(segmentId)
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-
-	// Either load existing segment or create new one based on discovered metadata.
-	if err := sm.loadOrCreateSegment(segmentId, sequenceId, totalEntries); err != nil {
-		return nil, err
-	}
-
-	// Registers a callback on the active segment to maintain segment
-	// references when rotation occurs. This ensures the SegmentManager
-	// always points to the most recent active segment.
-	sm.segment.RegisterRotationHandler(func(segment *segment.Segment) {
-		sm.mu.Lock()
-		sm.segment = segment
-		sm.mu.Unlock()
-	})
-
-	return &sm, nil
+	return sm, nil
 }
 
 // Write creates a new record with the provided data and writes it to the current segment.
@@ -143,19 +158,25 @@ func (sm *SegmentManager) SegmentInfo() (*segment.SegmentInfo, error) {
 //   - Generates new segment ID by incrementing current
 //   - Initializes new segment with zero entries
 func (sm *SegmentManager) CreateSegment(context context.Context) (*segment.Segment, error) {
-	sm.mu.Lock()
-	id := sm.segment.ID() + 1
-	sm.mu.Unlock()
+	id, err := sm.segment.ID()
+	if err != nil {
+		return nil, err
+	}
 
-	newSeg, err := segment.NewSegment(
+	newSegment, err := segment.NewSegment(
 		context,
-		&segment.Config{NextLogSequence: 0, TotalSizeInBytes: 0, SegmentId: id, Options: sm.opts},
+		&segment.Config{
+			NextLogSequence:  0,
+			TotalSizeInBytes: 0,
+			SegmentId:        id + 1,
+			Options:          sm.opts,
+		},
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	return newSeg, nil
+	return newSegment, nil
 }
 
 // Switches the current active segment with a new one.
@@ -231,8 +252,8 @@ func (sm *SegmentManager) getLatestSegmentId() (uint64, error) {
 	return latestId, nil
 }
 
-// Scans a segment file to find the highest sequence number and total entries.
-func (sm *SegmentManager) scanSegmentMetadata(id uint64) (uint64, uint64, error) {
+// Scans a segment file to find the highest sequence number, total entries and last offset.
+func (sm *SegmentManager) scanSegmentMetadata(id uint64) (uint64, uint64, uint64, error) {
 	fileName := fmt.Sprintf("%s%d.log", sm.opts.SegmentOptions.Prefix, id)
 	path := filepath.Join(sm.opts.Directory, sm.opts.SegmentOptions.Directory, fileName)
 
@@ -243,9 +264,9 @@ func (sm *SegmentManager) scanSegmentMetadata(id uint64) (uint64, uint64, error)
 	file, err := os.OpenFile(path, os.O_RDONLY, 0644)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return 0, 0, nil
+			return 0, 0, 0, nil
 		}
-		return latestSequence, totalEntries, fmt.Errorf("failed to open segment %d : %w", id, err)
+		return latestSequence, totalEntries, offset, fmt.Errorf("failed to open segment %d : %w", id, err)
 	}
 	defer file.Close()
 
@@ -255,7 +276,7 @@ func (sm *SegmentManager) scanSegmentMetadata(id uint64) (uint64, uint64, error)
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			return 0, 0, fmt.Errorf("error reading header at offset %d: %w", offset, err)
+			return 0, 0, 0, fmt.Errorf("error reading header at offset %d: %w", offset, err)
 		}
 
 		totalEntries++
@@ -265,21 +286,28 @@ func (sm *SegmentManager) scanSegmentMetadata(id uint64) (uint64, uint64, error)
 
 		offset += uint64(binary.Size(header) + int(header.PayloadSize))
 		if _, err := file.Seek(int64(offset), 0); err != nil {
-			return 0, 0, fmt.Errorf("error seeking to next entry: %w at offset %d", err, offset)
+			return 0, 0, 0, fmt.Errorf("error seeking to next entry: %w at offset %d", err, offset)
 		}
 	}
 
-	return latestSequence, totalEntries, nil
+	latestSequence += 1
+	return latestSequence, totalEntries, offset, nil
 }
 
 // Initializes a new segment with the given ID and sets it as the active segment.
 // This ensures there is always a valid segment available for writing new entries.
 //
 // Returns an error if segment creation fails.
-func (sm *SegmentManager) loadOrCreateSegment(id, lsn, total uint64) error {
+func (sm *SegmentManager) loadOrCreateSegment(id, lsn, total, offset uint64) error {
 	segment, err := segment.NewSegment(
 		context.Background(),
-		&segment.Config{SegmentId: id, NextLogSequence: lsn, TotalSizeInBytes: total, Options: sm.opts},
+		&segment.Config{
+			SegmentId:        id,
+			NextLogSequence:  lsn,
+			TotalSizeInBytes: total,
+			LastOffset:       offset,
+			Options:          sm.opts,
+		},
 	)
 	if err != nil {
 		return err

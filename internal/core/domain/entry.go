@@ -338,6 +338,20 @@ func (e *Entry) UnMarshalProto(data []byte) error {
 		return ErrNilMetadata
 	}
 
+	if e.Header == nil {
+		e.Header = &EntryHeader{}
+	}
+
+	if e.Payload == nil {
+		e.Payload = &EntryPayload{
+			Metadata: &PayloadMetadata{},
+		}
+	}
+
+	if e.Payload.Metadata == nil {
+		e.Payload.Metadata = &PayloadMetadata{}
+	}
+
 	e.Payload.Payload = entry.Payload
 	e.Payload.Metadata.Checksum = entry.Metadata.Checksum
 	e.Payload.Metadata.Timestamp = entry.Metadata.Timestamp
