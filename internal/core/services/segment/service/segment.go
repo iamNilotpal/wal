@@ -46,7 +46,6 @@ func NewSegment(ctx context.Context, config *Config) (*Segment, error) {
 				segment.id = config.SegmentId
 				segment.createdAt = time.Now()
 				segment.options = config.Options
-				segment.prevOffset = config.LastOffset
 				segment.currOffset = config.LastOffset
 				segment.totalEntries = config.TotalSizeInBytes
 				segment.nextLogSequence = config.NextLogSequence
@@ -82,6 +81,8 @@ func NewSegment(ctx context.Context, config *Config) (*Segment, error) {
 
 					size = 0
 					segment.id++
+					segment.prevOffset = 0
+					segment.currOffset = 0
 					segment.totalEntries = 0
 					segment.nextLogSequence = 0
 
@@ -93,6 +94,8 @@ func NewSegment(ctx context.Context, config *Config) (*Segment, error) {
 						cancel()
 						return fmt.Errorf("error creating segment file : %w", err)
 					}
+				} else if size > 0 {
+					segment.prevOffset = uint64(stats.Size()) - config.LastOffset
 				}
 
 				// Move file pointer to end for appending.
@@ -273,8 +276,8 @@ func (s *Segment) Write(ctx context.Context, record *Record, sync bool) error {
 				// Update all segment metadata atomically after successful write.
 				s.totalEntries++
 				s.nextLogSequence++
-				s.prevOffset = s.currOffset
 				s.size += uint32(entrySize)
+				s.prevOffset = s.currOffset
 				s.currOffset += uint64(entrySize)
 
 				// Perform final flush if sync is requested.
@@ -308,7 +311,7 @@ func (s *Segment) ReadAt(ctx context.Context, offset int64) (*domain.Entry, erro
 		defer s.mu.RUnlock()
 
 		// Create bounded reader to prevent large allocations.
-		reader := io.NewSectionReader(s.file, offset, int64(s.options.PayloadOptions.MaxSize))
+		reader := io.NewSectionReader(s.file, offset, int64(s.options.PayloadOptions.MaxSize)+segment.HeaderSize)
 
 		// Read the entry header from the file.
 		var header domain.EntryHeader
@@ -325,21 +328,30 @@ func (s *Segment) ReadAt(ctx context.Context, offset int64) (*domain.Entry, erro
 		buffer := s.bufferPool.Get()
 		defer s.bufferPool.Put(buffer)
 
-		totalSize := int(header.PayloadSize)
+		payloadSize := int(header.PayloadSize)
 
 		// Ensure the buffer has sufficient capacity.
-		if buffer.Cap() < totalSize {
-			buffer.Grow(totalSize)
+		if buffer.Cap() < payloadSize {
+			buffer.Grow(payloadSize)
 		}
 
 		entry.Header = &header
-		payload := buffer.Bytes()[:totalSize]
+		payload := buffer.Bytes()[:payloadSize]
 
 		// Read the payload from the file into the buffer.
-		if nn, err := io.ReadFull(reader, payload); err != nil {
+		//
+		// Method - 1
+		// if nn, err := io.Copy(buffer, reader); err != nil && !stdErrors.Is(err, io.EOF) {
+		// 	return fmt.Errorf("failed to read file : %w", err)
+		// } else if nn < int64(totalSize) {
+		// 	return fmt.Errorf("partial read, %d != %d", totalSize, nn)
+		// }
+		//
+		// Method - 2
+		if nn, err := io.ReadFull(reader, payload); err != nil && !stdErrors.Is(err, io.EOF) {
 			return fmt.Errorf("failed to read file : %w", err)
-		} else if nn < totalSize {
-			return fmt.Errorf("partial read, %d != %d", totalSize, nn)
+		} else if nn < payloadSize {
+			return fmt.Errorf("partial read, %d != %d", payloadSize, nn)
 		}
 
 		// If compression is enabled and the payload size exceeds the threshold, decompress the payload.
@@ -637,7 +649,7 @@ func (s *Segment) prepareEntry(record *Record) (*domain.Entry, []byte, error) {
 			Payload: record.Payload,
 			Metadata: &domain.PayloadMetadata{
 				Type:       record.Type,
-				PrevOffset: s.currOffset,
+				PrevOffset: s.prevOffset,
 				Timestamp:  time.Now().UnixNano(),
 			},
 		},

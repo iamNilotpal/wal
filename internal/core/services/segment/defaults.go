@@ -13,6 +13,7 @@ const (
 	MaxSegmentAge  = time.Duration(time.Hour * 24) // 24h
 	MinSegmentSize = 1048576                       // 1MB
 	MaxSegmentSize = 67108864                      // 64MB
+	HeaderSize     = 13                            // 13Bytes
 
 	MinBufferAvailablePercent = 25
 	WriteTimeout              = 1 * time.Second
