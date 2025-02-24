@@ -26,8 +26,8 @@ var (
 	ErrSegmentClosed = stdErrors.New("operation failed: cannot access closed segment")
 )
 
-// NewSegment creates or opens a new log segment.
-func NewSegment(ctx context.Context, config *Config) (*Segment, error) {
+// New creates or opens a new log segment.
+func New(ctx context.Context, config *Config) (*Segment, error) {
 	segment := &Segment{}
 
 	if err := system.RunWithContext(ctx, func(ctx context.Context) error {
@@ -523,7 +523,7 @@ func (s *Segment) Rotate(context context.Context) (*Segment, error) {
 	// - Reset sequence numbers (starting from 0).
 	// - Reset size counter.
 	// - Inheriting options from the current segment.
-	segment, err := NewSegment(
+	segment, err := New(
 		context,
 		&Config{SegmentId: s.id + 1, NextLogSequence: 0, TotalSizeInBytes: 0, Options: s.options},
 	)

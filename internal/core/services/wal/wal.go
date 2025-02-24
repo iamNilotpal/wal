@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/iamNilotpal/wal/internal/core/domain"
-	sm "github.com/iamNilotpal/wal/internal/core/services/segment/manager"
+	manager "github.com/iamNilotpal/wal/internal/core/services/segment/manager"
 	segment "github.com/iamNilotpal/wal/internal/core/services/segment/service"
 	"github.com/iamNilotpal/wal/pkg/errors"
 	"github.com/iamNilotpal/wal/pkg/system"
@@ -20,8 +20,8 @@ import (
 // sequential logging and supports crash recovery.
 type WAL struct {
 	// Core components and configuration
-	options *domain.WALOptions // Configuration controlling WAL behavior.
-	sm      *sm.SegmentManager // Handles segment lifecycle and maintenance.
+	options *domain.WALOptions      // Configuration controlling WAL behavior.
+	sm      *manager.SegmentManager // Handles segment lifecycle and maintenance.
 }
 
 // Creates a new Write-Ahead Log (WAL) instance with the provided options.
@@ -50,7 +50,7 @@ func New(ctx context.Context, opts *domain.WALOptions) (*WAL, error) {
 				}
 
 				// Initialize the segment manager which handles the underlying segments
-				sm, err := sm.NewSegmentManager(ctx, opts)
+				sm, err := manager.New(ctx, opts)
 				if err != nil {
 					return err
 				}

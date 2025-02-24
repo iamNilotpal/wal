@@ -56,7 +56,7 @@ type SegmentManager struct {
 //   - Directory creation fails.
 //   - Cannot determine the latest segment ID.
 //   - Loading/creating the active segment fails.
-func NewSegmentManager(ctx context.Context, opts *domain.WALOptions) (*SegmentManager, error) {
+func New(ctx context.Context, opts *domain.WALOptions) (*SegmentManager, error) {
 	sm := &SegmentManager{}
 
 	if err := system.RunWithContext(ctx, func(ctx context.Context) error {
@@ -177,7 +177,7 @@ func (sm *SegmentManager) CreateSegment(context context.Context) (*segment.Segme
 		return nil, err
 	}
 
-	newSegment, err := segment.NewSegment(
+	newSegment, err := segment.New(
 		context,
 		&segment.Config{
 			NextLogSequence:  0,
@@ -305,7 +305,7 @@ func (sm *SegmentManager) scanSegmentMetadata(id uint64) (uint64, uint64, uint64
 //
 // Returns an error if segment creation fails.
 func (sm *SegmentManager) loadOrCreateSegment(id, lsn, total, offset uint64) error {
-	segment, err := segment.NewSegment(
+	segment, err := segment.New(
 		context.Background(),
 		&segment.Config{
 			SegmentId:        id,
