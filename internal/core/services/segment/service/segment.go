@@ -244,8 +244,11 @@ func (s *Segment) Write(ctx context.Context, record *Record, sync bool) error {
 				// Certain entry types (metadata, rotation, checkpoint, finalize) are exempt
 				// from size limits as they are essential for segment management.
 				if record.Type == domain.EntryNormal {
-					if err := s.checkSizeLimits(ctx, entrySize); err != nil {
+					if segment, err := s.checkSizeLimits(ctx, entrySize); err != nil {
 						return err
+					} else if segment != nil {
+						s = segment
+						return s.Write(writeTimeoutCtx, record, sync)
 					}
 				}
 
@@ -354,13 +357,17 @@ func (s *Segment) ReadAt(ctx context.Context, offset int64) (*domain.Entry, erro
 			return fmt.Errorf("partial read, %d != %d", payloadSize, nn)
 		}
 
-		// If compression is enabled and the payload size exceeds the threshold, decompress the payload.
-		if s.options.CompressionOptions.Enable && len(payload) > config.CompressionThreshold {
+		// If compression is enabled and the payload is marked as compressed, decompress it.
+		if s.options.CompressionOptions.Enable && entry.Header.Compressed {
 			decompressedPayload, err := s.compressor.Decompress(payload)
 			if err != nil {
 				return fmt.Errorf("failed decompress data : %w", err)
 			}
-			payload = decompressedPayload
+
+			buffer.Reset()
+			buffer.Grow(len(decompressedPayload))
+			buffer.Write(decompressedPayload)
+			payload = buffer.Bytes()[:len(decompressedPayload)]
 		}
 
 		return entry.UnMarshalProto(payload)
@@ -369,6 +376,112 @@ func (s *Segment) ReadAt(ctx context.Context, offset int64) (*domain.Entry, erro
 	}
 
 	return entry, nil
+}
+
+// ReadAll retrieves all log entries from the segment file and returns them as a slice of domain.Entry.
+// This method ensures safe concurrent access and efficient memory usage while supporting context-based cancellation.
+//
+// The function operates by sequentially reading the segment file, extracting entry headers and payloads, and
+// deserializing them into domain.Entry objects. It leverages a buffer pool to optimize memory allocation and
+// supports decompression when necessary. In case of errors, it returns all successfully read entries alongside the error.
+func (s *Segment) ReadAll(ctx context.Context) ([]*domain.Entry, error) {
+	var entries []*domain.Entry
+
+	if s.closed.Load() {
+		return entries, ErrSegmentClosed
+	}
+
+	if err := system.RunWithContext(ctx, func(ctx context.Context) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			{
+				s.mu.RLock()
+				defer s.mu.RUnlock()
+
+				var offset int64
+				var errToReturn error
+
+			outerLoop:
+				for offset < int64(s.size) {
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					default:
+						{
+							var header domain.EntryHeader
+							// Create a section reader to read the next entry header and payload.
+							sectionReader := io.NewSectionReader(
+								s.file, offset, int64(s.options.PayloadOptions.MaxSize)+segment.HeaderSize,
+							)
+
+							// Read the entry header (metadata) from the segment file.
+							if err := binary.Read(sectionReader, binary.LittleEndian, &header); err != nil {
+								if stdErrors.Is(err, io.EOF) {
+									break outerLoop
+								}
+								errToReturn = err
+								break outerLoop
+							}
+
+							// Retrieve a buffer from the pool to minimize allocations.
+							buffer := s.bufferPool.Get()
+							payloadSize := int(header.PayloadSize)
+							entry := &domain.Entry{Header: &header}
+
+							// Ensure the buffer has sufficient capacity.
+							if buffer.Cap() < payloadSize {
+								buffer.Grow(payloadSize)
+							}
+
+							payload := buffer.Bytes()[:payloadSize]
+
+							// Read the full payload into the buffer.
+							if _, err := io.ReadFull(sectionReader, payload); err != nil && !stdErrors.Is(err, io.EOF) {
+								s.bufferPool.Put(buffer)
+								errToReturn = fmt.Errorf("failed to read payload: %w", err)
+								break outerLoop
+							}
+
+							// If compression is enabled and the payload is marked as compressed, decompress it.
+							if s.options.CompressionOptions.Enable && header.Compressed {
+								decompressedPayload, err := s.compressor.Decompress(payload)
+								if err != nil {
+									s.bufferPool.Put(buffer)
+									errToReturn = fmt.Errorf("failed decompress data : %w", err)
+									break outerLoop
+								}
+
+								// Reset buffer and store decompressed data.
+								buffer.Reset()
+								buffer.Grow(len(decompressedPayload))
+								buffer.Write(decompressedPayload)
+								payload = buffer.Bytes()
+							}
+
+							// Deserialize the payload into the Entry object.
+							if err := entry.UnMarshalProto(payload); err != nil {
+								s.bufferPool.Put(buffer)
+								errToReturn = err
+								break outerLoop
+							}
+
+							s.bufferPool.Put(buffer)
+							entries = append(entries, entry)
+							// Move the offset forward by the size of the read entry.
+							offset += int64(header.PayloadSize + segment.HeaderSize)
+						}
+					}
+				}
+				return errToReturn
+			}
+		}
+	}); err != nil {
+		return entries, err
+	}
+
+	return entries, nil
 }
 
 // Rotate creates a new segment and closes the current one,
@@ -563,46 +676,50 @@ func (s *Segment) flushLocked(sync bool) error {
 // maximum size. If the new entry would cause the segment to exceed its size limit,
 // this method initiates the rotation process to create a new segment.
 // Returns an error if the rotation process fails during size limit handling.
-func (s *Segment) checkSizeLimits(context context.Context, entrySize int) error {
+func (s *Segment) checkSizeLimits(context context.Context, entrySize int) (*Segment, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// Check if adding the new entry would exceed the maximum segment size
 	// The size check uses int conversion to handle potential large values safely
 	if int(s.size)+entrySize > int(s.options.SegmentOptions.MaxSegmentSize) {
-		if err := s.handleRotation(context); err != nil {
-			return fmt.Errorf("segment rotation failed: %w", err)
+		if segment, err := s.handleRotation(context); err != nil {
+			return s, fmt.Errorf("segment rotation failed: %w", err)
+		} else if segment != nil {
+			return segment, nil
+		} else {
+			return nil, nil
 		}
 	}
 
-	return nil
+	return nil, nil
 }
 
 // Manages the segment rotation process and ensures proper handling
 // of rotation callbacks. This method coordinates the transition between segments,
 // maintaining consistency in the logging system while preserving any rotation
 // callbacks that need to be executed.
-func (s *Segment) handleRotation(context context.Context) error {
+func (s *Segment) handleRotation(context context.Context) (*Segment, error) {
 	// Create a new segment through the rotation process.
 	newSegment, err := s.Rotate(context)
 	if err != nil {
-		return fmt.Errorf("failed to rotate segment: %w", err)
+		return nil, fmt.Errorf("failed to rotate segment: %w", err)
 	}
 
 	// Transfer rotation callback handler to the new segment.
-	// This requires careful locking to ensure thread safety.
+	// Update the segment reference to point to the new segment.
+	// Execute rotation callback if one is registered.
 	newSegment.mu.Lock()
-	newSegment.onRotate = s.onRotate
-	s = newSegment // Update the segment reference to point to the new segment
+	{
+		newSegment.onRotate = s.onRotate
+		s = newSegment
+		if s.onRotate != nil {
+			s.onRotate(s)
+		}
+	}
 	newSegment.mu.Unlock()
 
-	// Execute rotation callback if one is registered.
-	// This allows external components to react to segment rotations.
-	if s.onRotate != nil {
-		s.onRotate(s)
-	}
-
-	return nil
+	return newSegment, nil
 }
 
 // Determines whether the internal buffer should be flushed based on
@@ -678,6 +795,7 @@ func (s *Segment) prepareEntry(record *Record) (*domain.Entry, []byte, error) {
 		if err != nil {
 			return nil, nil, err
 		}
+		entry.Header.Compressed = true
 	}
 
 	// Set the final size after all transformations.

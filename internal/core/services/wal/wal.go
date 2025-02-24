@@ -117,6 +117,23 @@ func (wal *WAL) ReadAt(ctx context.Context, offset int64) (*domain.Entry, error)
 	return wal.sm.ReadAt(ctx, offset)
 }
 
+// ReadAll retrieves all log entries from the Write-Ahead Log (WAL).
+// It reads the stored entries sequentially and returns them as a slice of domain.Entry.
+//
+// Parameters:
+//   - ctx (context.Context): The context for managing request cancellation and timeouts.
+//
+// Returns:
+//   - []*domain.Entry: A slice of successfully read log entries.
+//   - error: An error if the read operation fails; otherwise, nil.
+//
+// This method ensures efficient log retrieval while respecting the provided context for
+// controlled execution. If the context is canceled, the operation terminates early and
+// returns the appropriate error.
+func (wal *WAL) ReadAll(ctx context.Context) ([]*domain.Entry, error) {
+	return wal.sm.ReadAll(ctx)
+}
+
 // Writes an entry containing the provided data bytes to the active segment. The context
 // allows cancellation of long-running writes. Each write is atomic and sequential,
 // maintaining the WAL's ordering guarantees.

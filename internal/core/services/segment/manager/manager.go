@@ -126,16 +126,15 @@ func NewSegmentManager(ctx context.Context, opts *domain.WALOptions) (*SegmentMa
 // ReadAt reads an entry from the segment at the specified offset.
 // This method delegates the read operation to the underlying segment, ensuring
 // proper data retrieval while maintaining abstraction at the SegmentManager level.
-//
-// Parameters:
-//   - ctx: Context for managing request lifecycle, supporting cancellation and timeouts.
-//   - offset: The byte offset in the segment file from which to read the entry.
-//
-// Returns:
-//   - *domain.Entry: A pointer to the retrieved entry if the operation succeeds.
-//   - error: An error if the read operation fails.
 func (sm *SegmentManager) ReadAt(ctx context.Context, offset int64) (*domain.Entry, error) {
 	return sm.segment.ReadAt(ctx, offset)
+}
+
+// ReadAll reads all entries from the segment.
+// This method delegates the read operation to the underlying segment, ensuring
+// proper data retrieval while maintaining abstraction at the SegmentManager level.
+func (sm *SegmentManager) ReadAll(ctx context.Context) ([]*domain.Entry, error) {
+	return sm.segment.ReadAll(ctx)
 }
 
 // Write creates a new record with the provided data and writes it to the current segment.
@@ -195,14 +194,6 @@ func (sm *SegmentManager) CreateSegment(context context.Context) (*segment.Segme
 }
 
 // Switches the current active segment with a new one.
-//   - Finalizes current segment by writing end metadata
-//   - Closes current segment file handles
-//   - Updates active segment reference
-//
-// Returns error if:
-//   - Current segment finalization fails
-//   - Current segment closure fails
-//   - Any file system operations fail
 func (sm *SegmentManager) SwitchActiveSegment(context context.Context, segment *segment.Segment) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()

@@ -111,6 +111,10 @@ type EntryHeader struct {
 	// Version indicates the format version of the entry structure.
 	// Allows for future format changes while maintaining backward compatibility.
 	Version uint8
+
+	// Compressed indicates whether the payload is stored in a compressed format.
+	// If true, the payload needs to be decompressed before processing.
+	Compressed bool
 }
 
 // Performs comprehensive header validation to ensure all fields
@@ -336,10 +340,6 @@ func (e *Entry) UnMarshalProto(data []byte) error {
 
 	if entry.Metadata == nil {
 		return ErrNilMetadata
-	}
-
-	if e.Header == nil {
-		e.Header = &EntryHeader{}
 	}
 
 	if e.Payload == nil {
