@@ -122,20 +122,20 @@ func New(ctx context.Context, config *Config) (*Segment, error) {
 						segment.checksum = checksum.NewCheckSummer(segment.options.ChecksumOptions.Algorithm)
 					}
 				}
-
 				if segment.options.CompressionOptions.Enable {
-					segment.compressor, err = compression.NewZstdCompression(
+					if compressor, err := compression.NewZstdCompression(
 						compression.Options{
 							Level:              segment.options.CompressionOptions.Level,
 							EncoderConcurrency: segment.options.CompressionOptions.EncoderConcurrency,
 							DecoderConcurrency: segment.options.CompressionOptions.DecoderConcurrency,
 						},
-					)
-					if err != nil {
+					); err != nil {
 						if err := segment.Close(ctx); err != nil {
 							return err
 						}
 						return fmt.Errorf("error creating compressor : %w", err)
+					} else {
+						segment.compressor = compressor
 					}
 				}
 

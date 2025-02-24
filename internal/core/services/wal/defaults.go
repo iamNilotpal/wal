@@ -86,8 +86,7 @@ func prepareDefaults(opts *domain.WALOptions) *domain.WALOptions {
 
 	if opts.ChecksumOptions == nil {
 		opts.ChecksumOptions = checksum.DefaultOptions()
-	} else {
-		opts.ChecksumOptions.Enable = true
+	} else if opts.ChecksumOptions.Enable {
 		if strings.TrimSpace(string(opts.ChecksumOptions.Algorithm)) == "" {
 			opts.ChecksumOptions.Algorithm = checksum.CRC32IEEE
 		}
@@ -95,9 +94,7 @@ func prepareDefaults(opts *domain.WALOptions) *domain.WALOptions {
 
 	if opts.CompressionOptions == nil {
 		opts.CompressionOptions = compression.DefaultOptions()
-	} else {
-		opts.CompressionOptions.Enable = true
-
+	} else if opts.CompressionOptions.Enable {
 		if opts.CompressionOptions.DecoderConcurrency == 0 {
 			opts.CompressionOptions.DecoderConcurrency = uint8(runtime.NumCPU())
 		}

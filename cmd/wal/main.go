@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 
+	"github.com/iamNilotpal/wal/internal/core/domain"
 	"github.com/iamNilotpal/wal/internal/core/services/wal"
 	"github.com/iamNilotpal/wal/pkg/errors"
 	"github.com/iamNilotpal/wal/pkg/logger"
@@ -15,7 +16,7 @@ func main() {
 
 	logger.Info("starting wal service")
 
-	wal, err := wal.New(context.Background(), nil)
+	wal, err := wal.New(context.Background(), &domain.WALOptions{})
 	if err != nil {
 		if errors.IsValidationError(err) {
 			err := errors.GetValidationError(err)
@@ -31,7 +32,7 @@ func main() {
 		logger.Errorw("read error", "error", err)
 	}
 
-	logger.Infow("data retrieved", "data", data[0])
+	logger.Infow("data retrieved", "data", data)
 
 	if err := wal.Close(context.Background()); err != nil {
 		logger.Infow("error closing wal", "error", err)
