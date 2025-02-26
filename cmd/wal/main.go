@@ -57,6 +57,10 @@ func main() {
 		logger.Errorw("flush error", "error", err)
 	}
 
+	info, _ := wal.SegmentInfo()
+	println("------------------------")
+	println("SegmentInfo :", info.Size)
+
 	// entries, err := wal.ReadAll(context.Background())
 	// if err != nil {
 	// 	logger.Errorw("read error", "error", err)

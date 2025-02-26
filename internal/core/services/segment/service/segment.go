@@ -500,6 +500,7 @@ func (s *Segment) Rotate(context context.Context) (*Segment, error) {
 	// This maintains the atomic nature of WAL entries even during rotation.
 	entry, encoded, err := s.prepareEntry(&rotationEntry)
 	if err != nil {
+		s.exclusiveMu.Unlock()
 		return nil, s.formatError("failed to prepare rotation entry", err)
 	}
 	s.exclusiveMu.Unlock()
@@ -749,11 +750,17 @@ func (s *Segment) writeEntry(entry *domain.Entry, encoded []byte, sync bool) err
 // Returns an error if the rotation process fails during size limit handling.
 func (s *Segment) checkSizeLimits(context context.Context, entrySize int) (*Segment, error) {
 	s.exclusiveMu.Lock()
+	defer s.exclusiveMu.Unlock()
+
 	// Check if adding the new entry would exceed the maximum segment size
 	// The size check uses int conversion to handle potential large values safely
 	if int(s.size)+entrySize > int(s.options.SegmentOptions.MaxSegmentSize) {
+		// We need to unlock before handling rotation to avoid deadlocks.
 		s.exclusiveMu.Unlock()
 		segment, err := s.handleRotation(context)
+		// Re-lock for consistency with the defer.
+		s.exclusiveMu.Lock()
+
 		if err != nil {
 			return s, err
 		}
@@ -763,7 +770,6 @@ func (s *Segment) checkSizeLimits(context context.Context, entrySize int) (*Segm
 		}
 	}
 
-	s.exclusiveMu.Unlock()
 	return nil, nil
 }
 
@@ -784,9 +790,8 @@ func (s *Segment) handleRotation(context context.Context) (*Segment, error) {
 	newSegment.metadataMu.Lock()
 	{
 		newSegment.onRotate = s.onRotate
-		s = newSegment
-		if s.onRotate != nil {
-			s.onRotate(s)
+		if newSegment.onRotate != nil {
+			newSegment.onRotate(newSegment)
 		}
 	}
 	newSegment.metadataMu.Unlock()
