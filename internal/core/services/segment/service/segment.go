@@ -28,7 +28,14 @@ var (
 
 // New creates or opens a new log segment.
 func New(ctx context.Context, config *Config) (*Segment, error) {
-	segment := &Segment{}
+	segment := &Segment{
+		id:              config.SegmentId,
+		options:         config.Options,
+		createdAt:       time.Now(),
+		currentOffset:   config.LastOffset,
+		nextLogSequence: config.NextLogSequence,
+		size:            uint32(config.TotalSizeInBytes),
+	}
 
 	if err := system.RunWithContext(ctx, func(ctx context.Context) error {
 		select {
@@ -37,18 +44,13 @@ func New(ctx context.Context, config *Config) (*Segment, error) {
 		default:
 			{
 				if config == nil {
-					return errors.NewValidationError("config", nil, fmt.Errorf("config is required"))
+					return errors.NewValidationError(
+						"config", nil, segment.formatError("config is required", nil),
+					)
 				}
 
 				fs := fs.NewLocalFileSystem()
-
 				segment.fs = fs
-				segment.id = config.SegmentId
-				segment.createdAt = time.Now()
-				segment.options = config.Options
-				segment.currOffset = config.LastOffset
-				segment.totalEntries = config.TotalSizeInBytes
-				segment.nextLogSequence = config.NextLogSequence
 
 				// Generate segment file path
 				fileName := segment.generateName()
@@ -58,15 +60,15 @@ func New(ctx context.Context, config *Config) (*Segment, error) {
 				// 0644 permissions: owner can read/write, others can only read.
 				file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
 				if err != nil {
-					return fmt.Errorf("error creating segment file : %w", err)
+					return segment.formatError("error creating segment file", err)
 				}
 
 				stats, err := file.Stat()
 				if err != nil {
 					if err := file.Close(); err != nil {
-						return fmt.Errorf("error closing file : %w", err)
+						return segment.formatError("error closing file", err)
 					}
-					return fmt.Errorf("error getting file stats : %w", err)
+					return segment.formatError("error getting file stats", err)
 				}
 
 				size := uint32(stats.Size())
@@ -76,14 +78,14 @@ func New(ctx context.Context, config *Config) (*Segment, error) {
 				if size >= segment.options.SegmentOptions.MaxSegmentSize {
 					if err := file.Close(); err != nil {
 						cancel()
-						return fmt.Errorf("error closing file : %w", err)
+						return segment.formatError("error closing file", err)
 					}
 
 					size = 0
 					segment.id++
-					segment.prevOffset = 0
-					segment.currOffset = 0
 					segment.totalEntries = 0
+					segment.currentOffset = 0
+					segment.previousOffset = 0
 					segment.nextLogSequence = 0
 
 					fileName = segment.generateName()
@@ -92,17 +94,17 @@ func New(ctx context.Context, config *Config) (*Segment, error) {
 					file, err = os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
 					if err != nil {
 						cancel()
-						return fmt.Errorf("error creating segment file : %w", err)
+						return segment.formatError("error creating segment file", err)
 					}
 				} else if size > 0 {
-					segment.prevOffset = uint64(stats.Size()) - config.LastOffset
+					segment.previousOffset = uint64(stats.Size()) - config.LastOffset
 				}
 
 				// Move file pointer to end for appending.
 				if _, err := file.Seek(0, io.SeekEnd); err != nil {
 					cancel()
 					if err := file.Close(); err != nil {
-						return fmt.Errorf("error closing file : %w", err)
+						return segment.formatError("error closing file", err)
 					}
 					return err
 				}
@@ -133,7 +135,7 @@ func New(ctx context.Context, config *Config) (*Segment, error) {
 						if err := segment.Close(ctx); err != nil {
 							return err
 						}
-						return fmt.Errorf("error creating compressor : %w", err)
+						return segment.formatError("error creating compressor", err)
 					} else {
 						segment.compressor = compressor
 					}
@@ -189,7 +191,7 @@ func (s *Segment) Info() (*SegmentInfo, error) {
 
 	stat, err := s.file.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("failed to load file stats : %w", err)
+		return nil, s.formatError("failed to load file stats", err)
 	}
 
 	info := FileMetadata{
@@ -206,22 +208,23 @@ func (s *Segment) Info() (*SegmentInfo, error) {
 		FilePath:       s.path,
 		Size:           stat.Size(),
 		CreatedAt:      s.createdAt,
-		CurrentOffset:  s.currOffset,
-		PrevOffset:     s.prevOffset,
 		Entries:        s.totalEntries,
+		CurrentOffset:  s.currentOffset,
+		PreviousOffset: s.previousOffset,
 		NextSequenceId: s.nextLogSequence,
 	}, nil
 }
 
-// Persists a record to the segment with sophisticated handling of buffering,
-// size limits, and durability guarantees. Forces immediate disk sync when true.
+// Write persists a record to the segment with sophisticated handling of buffering,
+// size limits, and durability guarantees. If `sync` is true, it forces an immediate
+// disk synchronization to ensure the write is durable.
 func (s *Segment) Write(ctx context.Context, record *Record, sync bool) error {
+	// Ensure the segment is open before proceeding.
 	if s.closed.Load() {
 		return ErrSegmentClosed
 	}
 
-	// Set up a timeout context for the flush operation
-	// This prevents potentially infinite blocking on I/O operations
+	// Set up a timeout context to prevent infinite blocking on I/O operations.
 	writeTimeoutCtx, cancel := context.WithTimeout(ctx, segment.WriteTimeout)
 	defer cancel()
 
@@ -231,61 +234,48 @@ func (s *Segment) Write(ctx context.Context, record *Record, sync bool) error {
 			return ctx.Err()
 		default:
 			{
-				// Prepare the entry for writing, which includes serialization and header generation.
-				// This step converts the logical record into its physical storage format.
+				// Estimate entry size for rotation check (more accurate size calculated after preparation).
+				headerSize := binary.Size(domain.EntryHeader{})
+				estimatedSize := len(record.Payload) + headerSize
+
+				// Check if rotation is needed before proceeding with the write.
+				// Only normal entries are subject to size limits; metadata entries must always be written.
+				if record.Type == domain.EntryNormal {
+					if newSegment, err := s.checkSizeLimits(ctx, estimatedSize); err != nil {
+						return s.formatError("segment rotation failed", err)
+					} else if newSegment != nil {
+						// Redirect the write to the new segment.
+						return newSegment.Write(ctx, record, sync)
+					}
+				}
+
+				// Lock I/O operations to ensure thread safety while writing data.
+				s.exclusiveMu.Lock()
+
+				// Prepare the entry for writing, including serialization, setting headers,
+				// applying compression, checksums, or other transformations if configured.
 				entry, encoded, err := s.prepareEntry(record)
 				if err != nil {
+					s.exclusiveMu.Unlock()
 					return err
 				}
 
-				headerSize := binary.Size(entry.Header)
-				entrySize := len(encoded) + headerSize
+				// Compute actual entry size after encoding.
+				actualEntrySize := len(encoded) + headerSize
 
-				// Certain entry types (metadata, rotation, checkpoint, finalize) are exempt
-				// from size limits as they are essential for segment management.
-				if record.Type == domain.EntryNormal {
-					if segment, err := s.checkSizeLimits(ctx, entrySize); err != nil {
-						return err
-					} else if segment != nil {
-						s = segment
-						return s.Write(writeTimeoutCtx, record, sync)
-					}
-				}
-
-				s.flushMu.Lock()
-				defer s.flushMu.Unlock()
-
-				// Check if we need to flush the buffer before this write.
-				if s.shouldFlushBuffer(entrySize) {
+				// Check if the write buffer needs to be flushed to make space for this entry.
+				if s.shouldFlushBuffer(actualEntrySize) {
 					if err := s.flushLocked(sync); err != nil {
+						s.exclusiveMu.Unlock()
 						return err
 					}
 				}
 
-				// Write the entry header using binary encoding.
-				// The header contains crucial metadata about the entry.
-				if err := binary.Write(s.writer, binary.LittleEndian, entry.Header); err != nil {
-					return fmt.Errorf("failed to write entry header : %w", err)
-				}
+				// Unlock I/O mutex before finalizing the write to avoid blocking other operations.
+				s.exclusiveMu.Unlock()
 
-				// Ensure complete write of encoded payload.
-				// Verify complete payload write to protect against partial writes.
-				if nn, err := s.writer.Write(encoded); err != nil {
-					return fmt.Errorf("failed to write entry : %w", err)
-				} else if nn != len(encoded) {
-					return fmt.Errorf("short write: %d != %d", nn, len(encoded))
-				}
-
-				// Update all segment metadata atomically after successful write.
-				s.totalEntries++
-				s.nextLogSequence++
-				s.size += uint32(entrySize)
-				s.prevOffset = s.currOffset
-				s.currOffset += uint64(entrySize)
-
-				// Perform final flush if sync is requested.
-				// This ensures durability guarantees are met according to the caller's requirements.
-				return s.flushLocked(sync)
+				// Perform the actual write operation, ensuring durability if `sync` is enabled.
+				return s.writeEntry(entry, encoded, sync)
 			}
 		}
 	})
@@ -310,8 +300,8 @@ func (s *Segment) ReadAt(ctx context.Context, offset int64) (*domain.Entry, erro
 			return ErrSegmentClosed
 		}
 
-		s.mu.RLock()
-		defer s.mu.RUnlock()
+		s.metadataMu.RLock()
+		defer s.metadataMu.RUnlock()
 
 		// Create bounded reader to prevent large allocations.
 		reader := io.NewSectionReader(s.file, offset, int64(s.options.PayloadOptions.MaxSize)+segment.HeaderSize)
@@ -319,7 +309,7 @@ func (s *Segment) ReadAt(ctx context.Context, offset int64) (*domain.Entry, erro
 		// Read the entry header from the file.
 		var header domain.EntryHeader
 		if err := binary.Read(reader, binary.LittleEndian, &header); err != nil {
-			return fmt.Errorf("failed to read header : %w", err)
+			return s.formatError("failed to read header", err)
 		}
 
 		// Validate header before allocation.
@@ -341,27 +331,27 @@ func (s *Segment) ReadAt(ctx context.Context, offset int64) (*domain.Entry, erro
 		entry.Header = &header
 		payload := buffer.Bytes()[:payloadSize]
 
-		// Read the payload from the file into the buffer.
-		//
 		// Method - 1
-		// if nn, err := io.Copy(buffer, reader); err != nil && !stdErrors.Is(err, io.EOF) {
-		// 	return fmt.Errorf("failed to read file : %w", err)
-		// } else if nn < int64(totalSize) {
-		// 	return fmt.Errorf("partial read, %d != %d", totalSize, nn)
-		// }
-		//
-		// Method - 2
-		if nn, err := io.ReadFull(reader, payload); err != nil && !stdErrors.Is(err, io.EOF) {
-			return fmt.Errorf("failed to read file : %w", err)
-		} else if nn < payloadSize {
-			return fmt.Errorf("partial read, %d != %d", payloadSize, nn)
+		// Read the payload from the file into the buffer.
+		if nn, err := io.Copy(buffer, reader); err != nil && !stdErrors.Is(err, io.EOF) {
+			return s.formatError("failed to read file", err)
+		} else if nn < int64(payloadSize) {
+			return s.formatError(fmt.Sprintf("partial read, %d != %d", payloadSize, nn), err)
 		}
+
+		// Method - 2
+		// Read the payload from the file into the buffer.
+		// if nn, err := io.ReadFull(reader, payload); err != nil && !stdErrors.Is(err, io.EOF) {
+		// 	return s.formatError("failed to read file", err)
+		// } else if nn < payloadSize {
+		// 	return s.formatError(fmt.Sprintf("partial read, %d != %d", payloadSize, nn), err)
+		// }
 
 		// If compression is enabled and the payload is marked as compressed, decompress it.
 		if s.options.CompressionOptions.Enable && entry.Header.Compressed {
 			decompressedPayload, err := s.compressor.Decompress(payload)
 			if err != nil {
-				return fmt.Errorf("failed decompress data : %w", err)
+				return s.formatError("failed decompress data", err)
 			}
 
 			buffer.Reset()
@@ -397,8 +387,8 @@ func (s *Segment) ReadAll(ctx context.Context) ([]*domain.Entry, error) {
 			return ctx.Err()
 		default:
 			{
-				s.mu.RLock()
-				defer s.mu.RUnlock()
+				s.metadataMu.RLock()
+				defer s.metadataMu.RUnlock()
 
 				var offset int64
 				var errToReturn error
@@ -440,7 +430,7 @@ func (s *Segment) ReadAll(ctx context.Context) ([]*domain.Entry, error) {
 							// Read the full payload into the buffer.
 							if _, err := io.ReadFull(sectionReader, payload); err != nil && !stdErrors.Is(err, io.EOF) {
 								s.bufferPool.Put(buffer)
-								errToReturn = fmt.Errorf("failed to read payload: %w", err)
+								errToReturn = s.formatError("failed to read payload", err)
 								break outerLoop
 							}
 
@@ -449,7 +439,7 @@ func (s *Segment) ReadAll(ctx context.Context) ([]*domain.Entry, error) {
 								decompressedPayload, err := s.compressor.Decompress(payload)
 								if err != nil {
 									s.bufferPool.Put(buffer)
-									errToReturn = fmt.Errorf("failed decompress data : %w", err)
+									errToReturn = s.formatError("failed decompress data", err)
 									break outerLoop
 								}
 
@@ -497,38 +487,47 @@ func (s *Segment) Rotate(context context.Context) (*Segment, error) {
 		return nil, ErrSegmentClosed
 	}
 
-	// Create a rotation record with the current segment's ID
-	// This serves as a marker in the log to indicate where rotation occurred.
 	buffer := s.bufferPool.Get()
 	defer s.bufferPool.Put(buffer)
 
+	// Create a rotation record with the current segment's ID.
+	// This serves as a marker in the log to indicate where rotation occurred.
 	buffer.WriteString(fmt.Sprintf("rotate-%d", s.id))
-	entry := Record{Payload: buffer.Bytes(), Type: domain.EntryRotation}
+	rotationEntry := Record{Payload: buffer.Bytes(), Type: domain.EntryRotation}
 
-	// Write the rotation marker to the current segment
-	// We don't force a sync here since we'll be closing the segment immediately.
-	// The Close operation will handle the final sync.
-	if err := s.Write(context, &entry, false); err != nil {
-		return nil, fmt.Errorf("failed to write rotation entry : %w", err)
+	s.exclusiveMu.Lock()
+	// Prepare the rotation entry with proper sequence numbers while holding the lock.
+	// This maintains the atomic nature of WAL entries even during rotation.
+	entry, encoded, err := s.prepareEntry(&rotationEntry)
+	if err != nil {
+		return nil, s.formatError("failed to prepare rotation entry", err)
 	}
+	s.exclusiveMu.Unlock()
 
-	// Close the current segment, which includes flushing and syncing all data.
-	// This ensures all data is safely persisted before we transition to the new segment.
-	if err := s.Close(context); err != nil {
+	// Write rotation entry, ensuring complete write.
+	if err := s.writeEntry(entry, encoded, false); err != nil {
 		return nil, err
 	}
 
-	// Create a new segment with an incremented id.
-	// The new segment starts fresh with:
-	// - Reset sequence numbers (starting from 0).
-	// - Reset size counter.
-	// - Inheriting options from the current segment.
+	// Close the current segment, which includes flushing and syncing all data
+	// This ensures all data is safely persisted before we transition to the new segment
+	if err := s.Close(context); err != nil {
+		return nil, s.formatError("failed to close segment during rotation", err)
+	}
+
+	// Create a new segment with an incremented ID.
+	// The new segment starts fresh with reset sequence numbers and size counter
 	segment, err := New(
 		context,
-		&Config{SegmentId: s.id + 1, NextLogSequence: 0, TotalSizeInBytes: 0, Options: s.options},
+		&Config{
+			NextLogSequence:  0,
+			TotalSizeInBytes: 0,
+			SegmentId:        s.id,
+			Options:          s.options,
+		},
 	)
 	if err != nil {
-		return nil, err
+		return nil, s.formatError("failed to create new segment during rotation", err)
 	}
 
 	return segment, nil
@@ -548,8 +547,8 @@ func (s *Segment) Flush(ctx context.Context, sync bool) error {
 			return ctx.Err()
 		default:
 			{
-				s.flushMu.Lock()
-				defer s.flushMu.Unlock()
+				s.exclusiveMu.Lock()
+				defer s.exclusiveMu.Unlock()
 				return s.flushLocked(sync)
 			}
 		}
@@ -574,7 +573,7 @@ func (s *Segment) Finalize(context context.Context) error {
 	entry := Record{Payload: buffer.Bytes(), Type: domain.EntrySegmentFinalize}
 
 	if err := s.Write(context, &entry, true); err != nil {
-		return fmt.Errorf("failed to write final entry : %w", err)
+		return s.formatError("failed to write final entry", err)
 	}
 
 	return nil
@@ -602,8 +601,8 @@ func (s *Segment) Close(ctx context.Context) error {
 				// Acquire the flush mutex to ensure exclusive access during cleanup.
 				// This prevents any concurrent flush operations from interfering
 				// with the closing sequence.
-				s.flushMu.Lock()
-				defer s.flushMu.Unlock()
+				s.exclusiveMu.Lock()
+				defer s.exclusiveMu.Unlock()
 
 				// Cancel the segment's internal context to signal all background
 				// operations and workers that they should terminate.
@@ -630,7 +629,7 @@ func (s *Segment) Close(ctx context.Context) error {
 				// are complete. Wrap the error to provide context about the failure.
 				if s.file != nil {
 					if err := s.file.Close(); err != nil {
-						return fmt.Errorf("error closing file : %w", err)
+						return s.formatError("error closing file", err)
 					}
 				}
 
@@ -656,7 +655,7 @@ func (s *Segment) flushLocked(sync bool) error {
 	// First, flush any buffered data to the underlying writer.
 	// This moves data from the in-memory buffer to the OS buffer.
 	if err := s.writer.Flush(); err != nil {
-		return fmt.Errorf("failed to flush buffer : %w", err)
+		return s.formatError("failed to flush buffer", err)
 	}
 
 	// Sync file to disk if either:
@@ -665,11 +664,83 @@ func (s *Segment) flushLocked(sync bool) error {
 	// This ensures data durability by writing OS buffers to disk.
 	if sync || s.options.SyncOnFlush || s.options.SyncOnWrite {
 		if err := s.file.Sync(); err != nil {
-			return fmt.Errorf("failed to sync file : %w", err)
+			return s.formatError("failed to sync file", err)
 		}
 	}
 
 	return nil
+}
+
+// writeEntry performs the low-level operation of writing a prepared entry
+// to the segment's underlying writer. It handles flushing the buffer if
+// necessary, writes the entry header and payload, updates segment metadata,
+// and optionally performs a disk sync.
+//
+// The method is designed to be called with the segment's main mutex (s.mu)
+// held to ensure atomicity of operations that modify segment metadata.
+// It uses a separate I/O mutex (ioMutex) to protect the
+// actual I/O operations, ensuring only one write or flush operation
+// occurs at a time. This prevents data races and ensures data integrity.
+//
+// Parameters:
+//   - entry: The prepared entry to be written. This includes the header
+//     and other metadata.
+//   - encoded: The encoded payload of the entry, ready to be written to the
+//     underlying writer.
+//   - sync: A boolean indicating whether to force a disk sync (fsync) after
+//     writing the entry.  This provides durability guarantees at the
+//     expense of performance.
+//
+// Returns:
+//   - error: An error if any step in the process fails, or nil on success.
+func (s *Segment) writeEntry(entry *domain.Entry, encoded []byte, sync bool) error {
+	// Acquire the I/O mutex to protect the I/O operations. This ensures that
+	// only one write or flush operation occurs at a time, preventing data races.
+	s.exclusiveMu.Lock()
+	// Ensure the I/O mutex is released when the function exits, regardless
+	// of whether an error occurs.
+	defer s.exclusiveMu.Unlock()
+
+	// Calculate the size of the entry header.
+	headerSize := binary.Size(entry.Header)
+	// Calculate the actual size of the entire entry (header + payload).
+	actualEntrySize := len(encoded) + headerSize
+
+	// Check if the buffer needs to be flushed before writing this entry.
+	// This ensures that there is enough space in the buffer for the new entry.
+	if s.shouldFlushBuffer(actualEntrySize) {
+		if err := s.flushLocked(sync); err != nil {
+			return s.formatError("failed to flush buffer", err)
+		}
+	}
+
+	// Write the entry header to the underlying writer.
+	if err := binary.Write(s.writer, binary.LittleEndian, entry.Header); err != nil {
+		return s.formatError("failed to write entry header", err)
+	}
+
+	// Write the encoded payload to the underlying writer.
+	bytesWritten, err := s.writer.Write(encoded)
+	if err != nil {
+		return s.formatError("failed to write entry payload", err)
+	}
+	// Verify that the entire payload was written.
+	if bytesWritten != len(encoded) {
+		return s.formatError(
+			fmt.Sprintf("short write occurred: %d bytes written, expected %d", bytesWritten, len(encoded)), io.ErrShortWrite,
+		)
+	}
+
+	// Update segment metadata.
+	s.totalEntries++
+	s.nextLogSequence++
+	s.size += uint32(actualEntrySize)
+	s.previousOffset = s.currentOffset
+	s.currentOffset += uint64(actualEntrySize)
+
+	// Flush the buffer to disk if sync is requested. This provides
+	// durability guarantees at the expense of performance.
+	return s.flushLocked(sync)
 }
 
 // Ensures that adding a new entry won't exceed the segment's configured
@@ -677,21 +748,22 @@ func (s *Segment) flushLocked(sync bool) error {
 // this method initiates the rotation process to create a new segment.
 // Returns an error if the rotation process fails during size limit handling.
 func (s *Segment) checkSizeLimits(context context.Context, entrySize int) (*Segment, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	s.exclusiveMu.Lock()
 	// Check if adding the new entry would exceed the maximum segment size
 	// The size check uses int conversion to handle potential large values safely
 	if int(s.size)+entrySize > int(s.options.SegmentOptions.MaxSegmentSize) {
-		if segment, err := s.handleRotation(context); err != nil {
-			return s, fmt.Errorf("segment rotation failed: %w", err)
-		} else if segment != nil {
+		s.exclusiveMu.Unlock()
+		segment, err := s.handleRotation(context)
+		if err != nil {
+			return s, err
+		}
+
+		if segment != nil {
 			return segment, nil
-		} else {
-			return nil, nil
 		}
 	}
 
+	s.exclusiveMu.Unlock()
 	return nil, nil
 }
 
@@ -703,13 +775,13 @@ func (s *Segment) handleRotation(context context.Context) (*Segment, error) {
 	// Create a new segment through the rotation process.
 	newSegment, err := s.Rotate(context)
 	if err != nil {
-		return nil, fmt.Errorf("failed to rotate segment: %w", err)
+		return nil, s.formatError("failed to rotate segment", err)
 	}
 
 	// Transfer rotation callback handler to the new segment.
 	// Update the segment reference to point to the new segment.
 	// Execute rotation callback if one is registered.
-	newSegment.mu.Lock()
+	newSegment.metadataMu.Lock()
 	{
 		newSegment.onRotate = s.onRotate
 		s = newSegment
@@ -717,7 +789,7 @@ func (s *Segment) handleRotation(context context.Context) (*Segment, error) {
 			s.onRotate(s)
 		}
 	}
-	newSegment.mu.Unlock()
+	newSegment.metadataMu.Unlock()
 
 	return newSegment, nil
 }
@@ -766,7 +838,7 @@ func (s *Segment) prepareEntry(record *Record) (*domain.Entry, []byte, error) {
 			Payload: record.Payload,
 			Metadata: &domain.PayloadMetadata{
 				Type:       record.Type,
-				PrevOffset: s.prevOffset,
+				PrevOffset: s.previousOffset,
 				Timestamp:  time.Now().UnixNano(),
 			},
 		},
@@ -848,6 +920,13 @@ func (s *Segment) writeEntryHeader() error {
 	buffer.WriteString(fmt.Sprintf("segment-%d", s.id))
 	entry := Record{Payload: buffer.Bytes(), Type: domain.EntrySegmentHeader}
 	return s.Write(s.ctx, &entry, true)
+}
+
+// formatError creates a new error with added context, including the segment's ID
+// and a descriptive message, wrapping the original error. This provides more
+// informative error messages for debugging and troubleshooting.
+func (s *Segment) formatError(message string, err error) error {
+	return fmt.Errorf("segment %d: %s: %w", s.id, message, err)
 }
 
 // Creates a segment filename by combining the configured prefix

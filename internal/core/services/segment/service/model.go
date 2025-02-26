@@ -36,9 +36,9 @@ type Segment struct {
 	size            uint32    // Total segment size.
 	nextLogSequence uint64    // Log Structured Number.
 	createdAt       time.Time // Segment creation time.
-	currOffset      uint64    // Current position where next write will occur.
+	currentOffset   uint64    // Current position where next write will occur.
 	totalEntries    uint64    // TotalEntries tracks cumulative entries including deleted ones.
-	prevOffset      uint64    // Last successfully written data offset, used for recovery and validation.
+	previousOffset  uint64    // Last successfully written data offset, used for recovery and validation.
 
 	// Rotation handling
 	onRotate func(segment *Segment) // Callback function invoked when segment rotation occurs.
@@ -47,11 +47,11 @@ type Segment struct {
 	closed atomic.Bool // Indicates if segment is closed for writing.
 
 	// Concurrency control mechanisms
-	wg      sync.WaitGroup     // Tracks completion of background tasks.
-	cancel  context.CancelFunc // Function to trigger graceful shutdown.
-	ctx     context.Context    // Context for canceling background operations.
-	mu      sync.RWMutex       // Protects concurrent access to segment metadata.
-	flushMu sync.Mutex         // Serializes flush operations to prevent data races.
+	wg          sync.WaitGroup     // Tracks completion of background tasks.
+	cancel      context.CancelFunc // Function to trigger graceful shutdown.
+	ctx         context.Context    // Context for canceling background operations.
+	exclusiveMu sync.Mutex         // Ensures exclusive access to the segment, allowing only one reader or writer at a time.
+	metadataMu  sync.RWMutex       // Protects metadata modifications, allowing multiple readers but only one writer at a time.
 }
 
 // SegmentInfo holds the metadata and statistics about a storage segment.
@@ -77,7 +77,7 @@ type SegmentInfo struct {
 	CurrentOffset uint64
 
 	// Last successfully written data offset, used for recovery and validation.
-	PrevOffset uint64
+	PreviousOffset uint64
 
 	// Next sequence number to be assigned.
 	// Ensures strict ordering of entries within segment.

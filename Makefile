@@ -4,7 +4,13 @@ VERSION := "1.0.0-$(shell git rev-parse --short HEAD)"
 build:
 	@CGO_ENABLED=0 GOARCH=$(go env GOARCH) GOOS=$(go env GOOS) go build -o ./bin/wal -a -ldflags="-s -w" -installsuffix cgo cmd/wal/main.go
 
+build-race:
+	@CGO_ENABLED=0 GOARCH=$(go env GOARCH) GOOS=$(go env GOOS) go build -race -o ./bin/wal -a -ldflags="-s -w" -installsuffix cgo cmd/wal/main.go
+
 run: build
+	@./bin/wal
+
+run-race: build-race
 	@./bin/wal
 
 gen-pb:
