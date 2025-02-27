@@ -23,7 +23,8 @@ import (
 )
 
 var (
-	ErrSegmentClosed = stdErrors.New("operation failed: cannot access closed segment")
+	ErrInvalidChecksum = stdErrors.New("wal: invalid checksum")
+	ErrSegmentClosed   = stdErrors.New("operation failed: cannot access closed segment")
 )
 
 // New creates or opens a new log segment.
@@ -360,7 +361,22 @@ func (s *Segment) ReadAt(ctx context.Context, offset int64) (*domain.Entry, erro
 			payload = buffer.Bytes()[:len(decompressedPayload)]
 		}
 
-		return entry.UnMarshalProto(payload)
+		if err := entry.UnMarshalProto(payload); err != nil {
+			return err
+		}
+
+		if s.options.ChecksumOptions.VerifyOnRead {
+			ok, err := s.verifyChecksum(entry)
+			if err != nil {
+				return s.formatError("failed to validate checksum", err)
+			}
+
+			if !ok {
+				return s.formatError("invalid signature", ErrInvalidChecksum)
+			}
+		}
+
+		return nil
 	}); err != nil {
 		return nil, err
 	}
@@ -425,14 +441,23 @@ func (s *Segment) ReadAll(ctx context.Context) ([]*domain.Entry, error) {
 								buffer.Grow(payloadSize)
 							}
 
-							payload := buffer.Bytes()[:payloadSize]
-
+							// Method - 1
 							// Read the full payload into the buffer.
-							if _, err := io.ReadFull(sectionReader, payload); err != nil && !stdErrors.Is(err, io.EOF) {
+							if _, err := io.Copy(buffer, sectionReader); err != nil && !stdErrors.Is(err, io.EOF) {
 								s.bufferPool.Put(buffer)
 								errToReturn = s.formatError("failed to read payload", err)
 								break outerLoop
 							}
+
+							// Method - 2
+							// Read the full payload into the buffer.
+							// if _, err := io.ReadFull(sectionReader, payload); err != nil && !stdErrors.Is(err, io.EOF) {
+							// 	s.bufferPool.Put(buffer)
+							// 	errToReturn = s.formatError("failed to read payload", err)
+							// 	break outerLoop
+							// }
+
+							payload := buffer.Bytes()[:payloadSize]
 
 							// If compression is enabled and the payload is marked as compressed, decompress it.
 							if s.options.CompressionOptions.Enable && header.Compressed {
@@ -455,6 +480,19 @@ func (s *Segment) ReadAll(ctx context.Context) ([]*domain.Entry, error) {
 								s.bufferPool.Put(buffer)
 								errToReturn = err
 								break outerLoop
+							}
+
+							if s.options.ChecksumOptions.VerifyOnRead {
+								ok, err := s.verifyChecksum(entry)
+								if err != nil {
+									errToReturn = s.formatError("failed to validate checksum", err)
+									break outerLoop
+								}
+
+								if !ok {
+									errToReturn = s.formatError("invalid signature", ErrInvalidChecksum)
+									break outerLoop
+								}
 							}
 
 							s.bufferPool.Put(buffer)
@@ -523,7 +561,7 @@ func (s *Segment) Rotate(context context.Context) (*Segment, error) {
 		&Config{
 			NextLogSequence:  0,
 			TotalSizeInBytes: 0,
-			SegmentId:        s.id,
+			SegmentId:        s.id + 1,
 			Options:          s.options,
 		},
 	)
@@ -891,6 +929,27 @@ func (s *Segment) prepareEntry(record *Record) (*domain.Entry, []byte, error) {
 func (s *Segment) setChecksum(entry *domain.Entry, data []byte) {
 	checksum := s.checksum.Calculate(data)
 	entry.Payload.Metadata.Checksum = checksum
+}
+
+func (s *Segment) verifyChecksum(entry *domain.Entry) (bool, error) {
+	newEntry := domain.Entry{
+		Header: entry.Header,
+		Payload: &domain.EntryPayload{
+			Payload: entry.Payload.Payload,
+			Metadata: &domain.PayloadMetadata{
+				Type:       entry.Payload.Metadata.Type,
+				Timestamp:  entry.Payload.Metadata.Timestamp,
+				PrevOffset: entry.Payload.Metadata.PrevOffset,
+			},
+		},
+	}
+
+	encoded, err := newEntry.MarshalProto(false)
+	if err != nil {
+		return false, s.formatError("failed to marshal proto", err)
+	}
+
+	return s.checksum.Verify(encoded, entry.Payload.Metadata.Checksum), nil
 }
 
 // Compresses the provided data bytes using the segment's
