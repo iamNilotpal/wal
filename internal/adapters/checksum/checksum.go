@@ -45,10 +45,9 @@ func NewCheckSummer(alg domain.ChecksumAlgorithm) ports.ChecksumPort {
 // Returns recommended checksum settings.
 func DefaultOptions() *domain.ChecksumOptions {
 	return &domain.ChecksumOptions{
-		Enable:        true,
-		VerifyOnRead:  true,
-		VerifyOnWrite: true,
-		Algorithm:     CRC32IEEE,
+		Enable:       true,
+		VerifyOnRead: true,
+		Algorithm:    CRC32IEEE,
 	}
 }
 

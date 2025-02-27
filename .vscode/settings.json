@@ -10,6 +10,7 @@
     "installsuffix",
     "klauspost",
     "Mpkg",
-    "protoc"
+    "protoc",
+    "Retryable"
   ]
 }

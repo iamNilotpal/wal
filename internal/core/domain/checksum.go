@@ -26,8 +26,4 @@ type ChecksumOptions struct {
 	// VerifyOnRead determines if checksums should be verified during read operations.
 	// Recommended to keep enabled except in specific performance-critical scenarios.
 	VerifyOnRead bool `json:"verifyOnRead"`
-
-	// VerifyOnWrite determines if checksums should be calculated and stored during writes.
-	// Disabling allows faster writes but removes corruption detection.
-	VerifyOnWrite bool `json:"verifyOnWrite"`
 }
