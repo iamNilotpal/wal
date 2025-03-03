@@ -379,7 +379,9 @@ func (s *Segment) ReadAt(ctx context.Context, offset int64) (*domain.Entry, erro
 // deserializing them into domain.Entry objects. It leverages a buffer pool to optimize memory allocation and
 // supports decompression when necessary. In case of errors, it returns all successfully read entries alongside the error.
 func (s *Segment) ReadAll(ctx context.Context) ([]*domain.Entry, error) {
-	var entries []*domain.Entry
+	// Estimate capacity based on average entry size.
+	estimatedCapacity := int(s.size) / (segment.HeaderSize + 1048576) // 1048576 = 1MB
+	entries := make([]*domain.Entry, 0, estimatedCapacity)
 
 	if s.closed.Load() {
 		return entries, ErrSegmentClosed

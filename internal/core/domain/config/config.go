@@ -15,24 +15,7 @@ const (
 	// MaxPayloadSize defines the absolute maximum size for a single log entry.
 	// This limit helps prevent memory exhaustion and ensures consistent
 	// performance characteristics across the system.
-	MaxPayloadSize = 8388608 - 13 // 7.99MB. (header + payload = 8MB)
-
-	// Batch processing thresholds define how multiple log entries are grouped
-	// together for improved I/O efficiency.
-
-	// MinBatchSize represents the smallest batch size that provides
-	// meaningful performance benefits over individual writes.
-	MinBatchSize = 32 * 1024 // 32KB.
-
-	// DefaultBatchSize is the recommended batch size for most operations.
-	// This size provides optimal I/O performance while maintaining
-	// reasonable memory usage and latency characteristics.
-	DefaultBatchSize = 512 * 1024 // 512KB.
-
-	// MaxBatchSize defines the upper limit for batch operations.
-	// This prevents excessive memory usage and ensures predictable
-	// latency even during high-load situations.
-	MaxBatchSize = 8 * 1024 * 1024 // 8MB.
+	MaxPayloadSize = (1024 * 1024 * 8) - 14 // 7.99MB. (header + payload = 8MB)
 
 	// CompressionThreshold determines when to apply compression.
 	// Entries larger than this size are candidates for compression,
