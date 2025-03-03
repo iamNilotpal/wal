@@ -13,6 +13,8 @@ type WALOptions struct {
 	// Directory specifies the base path where WAL files will be stored.
 	// If empty, the current working directory will be used.
 	// The directory must be writable and should be on a durable storage device.
+	//
+	// Default: "logs"
 	Directory string `json:"directory"`
 
 	// BufferSize controls the size of the in-memory write buffer.
@@ -29,13 +31,6 @@ type WALOptions struct {
 	//
 	// Default: false
 	SyncOnWrite bool `json:"syncOnWrite"`
-
-	// SyncOnFlush determines if fsync is called on every flush.
-	// True provides better durability but worse performance.
-	// False provides better performance but risks data loss on power failure.
-	//
-	// Default: false
-	SyncOnFlush bool `json:"syncOnFlush"`
 
 	// RetentionDays specifies how many days to keep rotated WAL files.
 	// Files older than this will be automatically deleted during maintenance.

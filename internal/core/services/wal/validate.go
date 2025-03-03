@@ -91,7 +91,7 @@ func Validate(opts *domain.WALOptions) error {
 		)
 	}
 
-	if opts.WriteTimeout != 0 && opts.WriteTimeout < segment.MaxWriteTimeout {
+	if opts.WriteTimeout != 0 && opts.WriteTimeout > segment.MaxWriteTimeout {
 		return errors.NewValidationError(
 			"writeTimeout",
 			opts.MaxSegmentsKept,
@@ -134,11 +134,11 @@ func Validate(opts *domain.WALOptions) error {
 
 func validateBufferSize(size uint32) error {
 	// Check minimum size.
-	if size < MinBufferSize {
+	if size < DefaultBufferSize {
 		return errors.NewValidationError(
 			"bufferSize",
 			size,
-			fmt.Errorf("buffer size must be at least 4KB (4096 bytes), got %d bytes", size),
+			fmt.Errorf("buffer size must be at least 1MB (1048576 bytes), got %d bytes", size),
 		)
 	}
 

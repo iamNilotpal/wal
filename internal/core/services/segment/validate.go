@@ -20,6 +20,5 @@ func Validate(opts *domain.SegmentOptions) error {
 			),
 		)
 	}
-
 	return nil
 }

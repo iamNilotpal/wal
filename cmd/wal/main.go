@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
+	"time"
 
 	"github.com/iamNilotpal/wal/internal/adapters/checksum"
 	"github.com/iamNilotpal/wal/internal/core/domain"
@@ -25,6 +25,7 @@ func main() {
 
 	wal, err := wal.New(context.Background(),
 		&domain.WALOptions{
+			WriteTimeout: time.Second * 5,
 			ChecksumOptions: &domain.ChecksumOptions{
 				Enable:       true,
 				VerifyOnRead: true,
@@ -46,44 +47,34 @@ func main() {
 	// numGoroutines := 5000
 	// data := []byte(stringData)
 
-	// start := time.Now()
+	start := time.Now()
 	// wg.Add(numGoroutines)
 
-	// for range numGoroutines {
+	// for i := range numGoroutines {
 	// 	go func() {
 	// 		defer wg.Done()
-	// 		if err := wal.Write(context.Background(), data, false); err != nil {
+	// 		if err := wal.Write(context.Background(), data, i == numGoroutines-1); err != nil {
 	// 			logger.Errorw("write error", "error", err)
 	// 		}
 	// 	}()
 	// }
 
 	// wg.Wait()
-	// println("Time taken : ", time.Since(start).Seconds(), "s")
+	// println("Time taken to Write: ", time.Since(start).Milliseconds(), "ms")
 
-	// if err := wal.Flush(context.Background(), true); err != nil {
-	// 	logger.Errorw("flush error", "error", err)
-	// }
-
-	// info, _ := wal.SegmentInfo()
-	// println("------------------------")
-	// println("SegmentInfo :", info.Size)
+	start = time.Now()
+	if err := wal.Flush(context.Background()); err != nil {
+		logger.Errorw("flush error", "error", err)
+	}
+	println("Time taken to Flush: ", time.Since(start).Milliseconds(), "ms")
 
 	entries, err := wal.ReadAll(context.Background())
 	if err != nil {
 		logger.Errorw("read error", "error", err)
 	}
 
-	if len(entries) > 0 {
-		for _, entry := range entries {
-			println("-----------------------")
-			fmt.Printf(
-				"Sequence : %v, PayloadSize : %v, Compressed : %v, PayloadSize : %v\n",
-				entry.Header.Sequence, entry.Header.Version, entry.Header.Compressed, entry.Header.PayloadSize,
-			)
-			println("-----------------------")
-		}
-	}
+	println("Time taken to ReadAll :", time.Since(start).Milliseconds(), "ms")
+	println("Total Entries :", len(entries))
 
 	if err := wal.Close(context.Background()); err != nil {
 		logger.Infow("error closing wal", "error", err)

@@ -40,18 +40,17 @@ type Segment struct {
 	totalEntries    uint64    // TotalEntries tracks cumulative entries including deleted ones.
 	previousOffset  uint64    // Last successfully written data offset, used for recovery and validation.
 
-	// Rotation handling
-	onRotate func(segment *Segment) // Callback function invoked when segment rotation occurs.
+	// Callback function invoked when segment rotation occurs.
+	onRotate func(segment *Segment)
 
-	// State management flags.
-	closed atomic.Bool // Indicates if segment is closed for writing.
+	// Indicates if segment is closed for writing.
+	closed atomic.Bool
 
-	// Concurrency control mechanisms
-	wg          sync.WaitGroup     // Tracks completion of background tasks.
-	cancel      context.CancelFunc // Function to trigger graceful shutdown.
-	ctx         context.Context    // Context for canceling background operations.
-	exclusiveMu sync.Mutex         // Ensures exclusive access to the segment, allowing only one reader or writer at a time.
-	metadataMu  sync.RWMutex       // Protects metadata modifications, allowing multiple readers but only one writer at a time.
+	// Concurrency control mechanisms.
+	wg     sync.WaitGroup     // Tracks completion of background tasks.
+	cancel context.CancelFunc // Function to trigger graceful shutdown.
+	ctx    context.Context    // Context for canceling background operations.
+	mu     sync.Mutex         // Ensures exclusive access to the segment, allowing only one reader or writer at a time.
 }
 
 // SegmentInfo holds the metadata and statistics about a storage segment.

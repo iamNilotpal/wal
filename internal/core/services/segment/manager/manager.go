@@ -35,7 +35,7 @@ type SegmentManager struct {
 	segment *segment.Segment // Currently active segment for writing.
 
 	// Concurrency control
-	mu     sync.RWMutex       // Guards segment state modifications.
+	mu     sync.Mutex         // Guards segment state modifications.
 	wg     sync.WaitGroup     // Tracks completion of background tasks.
 	cancel context.CancelFunc // Function to trigger graceful shutdown.
 	ctx    context.Context    // Context for canceling background operations.
@@ -145,15 +145,12 @@ func (sm *SegmentManager) Write(context context.Context, data []byte, sync bool)
 }
 
 // Flush ensures all buffered data in the current segment is written to stable storage.
-func (sm *SegmentManager) Flush(context context.Context, sync bool) error {
-	return sm.segment.Flush(context, sync)
+func (sm *SegmentManager) Flush(context context.Context) error {
+	return sm.segment.Flush(context)
 }
 
 // Rotate performs a safe transition from the current segment to a new one.
 func (sm *SegmentManager) Rotate(context context.Context) error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
 	segment, err := sm.segment.Rotate(context)
 	if err != nil {
 		return err
@@ -195,9 +192,6 @@ func (sm *SegmentManager) CreateSegment(context context.Context) (*segment.Segme
 
 // Switches the current active segment with a new one.
 func (sm *SegmentManager) SwitchActiveSegment(context context.Context, segment *segment.Segment) error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
 	if err := sm.segment.Finalize(context); err != nil {
 		return fmt.Errorf("failed to finalize active segment : %w", err)
 	}
@@ -214,9 +208,6 @@ func (sm *SegmentManager) SwitchActiveSegment(context context.Context, segment *
 func (sm *SegmentManager) Close(context context.Context) error {
 	sm.cancel()
 	sm.wg.Wait()
-
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
 
 	sm.cleanupTicker.Stop()
 	sm.compactTicker.Stop()

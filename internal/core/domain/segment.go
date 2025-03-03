@@ -31,7 +31,7 @@ type SegmentOptions struct {
 	// Directory specifies where segment files are stored.
 	// Should be on a filesystem appropriate for write-ahead logging.
 	//
-	// Default: "/segments"
+	// Default: "/logs/segments"
 	Directory string `json:"directory"`
 
 	// Prefix defines the filename prefix for segment files.

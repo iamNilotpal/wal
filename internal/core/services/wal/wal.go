@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/iamNilotpal/wal/internal/core/domain"
 	manager "github.com/iamNilotpal/wal/internal/core/services/segment/manager"
@@ -19,9 +20,9 @@ import (
 // before acknowledging writes. The WAL ensures data consistency through
 // sequential logging and supports crash recovery.
 type WAL struct {
-	// Core components and configuration
 	options *domain.WALOptions      // Configuration controlling WAL behavior.
 	sm      *manager.SegmentManager // Handles segment lifecycle and maintenance.
+	mu      sync.Mutex              // Guards state modifications.
 }
 
 // Creates a new Write-Ahead Log (WAL) instance with the provided options.
@@ -145,23 +146,26 @@ func (wal *WAL) Write(context context.Context, data []byte, sync bool) error {
 	if err := wal.validateSize(uint32(len(data))); err != nil {
 		return err
 	}
+
+	wal.mu.Lock()
+	defer wal.mu.Unlock()
+
 	return wal.sm.Write(context, data, sync)
 }
 
 // Rotates to a new segment when the current one reaches capacity. This prevents any single
 // segment from growing too large while maintaining write availability.
 func (wal *WAL) Rotate(context context.Context) error {
+	wal.mu.Lock()
+	defer wal.mu.Unlock()
 	return wal.sm.Rotate(context)
 }
 
-// Ensures durability of written entries by flushing buffers to disk. The sync flag controls
-// whether to force a file sync.
-//
-// It syncs to disk if either:
-//   - sync parameter is true.
-//   - sync is false but SyncOnFlush is true.
-func (wal *WAL) Flush(context context.Context, sync bool) error {
-	return wal.sm.Flush(context, sync)
+// Ensures durability of written entries by flushing buffers to disk.
+func (wal *WAL) Flush(context context.Context) error {
+	wal.mu.Lock()
+	defer wal.mu.Unlock()
+	return wal.sm.Flush(context)
 }
 
 // Creates a new segment which is a single file where WAL entries could be written.
@@ -172,6 +176,8 @@ func (wal *WAL) CreateSegment(context context.Context) (*segment.Segment, error)
 // Switches the target segment for new writes. This allows external control over which
 // segment receives entries, enabling operations like log compaction and segment retirement.
 func (wal *WAL) SwitchActiveSegment(context context.Context, segment *segment.Segment) error {
+	wal.mu.Lock()
+	defer wal.mu.Unlock()
 	return wal.sm.SwitchActiveSegment(context, segment)
 }
 
@@ -185,6 +191,8 @@ func (wal *WAL) SegmentInfo() (*segment.SegmentInfo, error) {
 // Gracefully shuts down the WAL by cancelling ongoing operations and ensuring all segments
 // are properly closed and synced to disk. This prevents data corruption from improper shutdown.
 func (wal *WAL) Close(context context.Context) error {
+	wal.mu.Lock()
+	defer wal.mu.Unlock()
 	return wal.sm.Close(context)
 }
 

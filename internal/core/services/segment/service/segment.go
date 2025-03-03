@@ -226,7 +226,7 @@ func (s *Segment) Write(ctx context.Context, record *Record, sync bool) error {
 	}
 
 	// Set up a timeout context to prevent infinite blocking on I/O operations.
-	writeTimeoutCtx, cancel := context.WithTimeout(ctx, segment.WriteTimeout)
+	writeTimeoutCtx, cancel := context.WithTimeout(ctx, s.options.WriteTimeout)
 	defer cancel()
 
 	return system.RunWithContext(writeTimeoutCtx, func(ctx context.Context) error {
@@ -250,14 +250,10 @@ func (s *Segment) Write(ctx context.Context, record *Record, sync bool) error {
 					}
 				}
 
-				// Lock I/O operations to ensure thread safety while writing data.
-				s.exclusiveMu.Lock()
-
 				// Prepare the entry for writing, including serialization, setting headers,
 				// applying compression, checksums, or other transformations if configured.
 				entry, encoded, err := s.prepareEntry(record)
 				if err != nil {
-					s.exclusiveMu.Unlock()
 					return err
 				}
 
@@ -266,14 +262,10 @@ func (s *Segment) Write(ctx context.Context, record *Record, sync bool) error {
 
 				// Check if the write buffer needs to be flushed to make space for this entry.
 				if s.shouldFlushBuffer(actualEntrySize) {
-					if err := s.flushLocked(sync); err != nil {
-						s.exclusiveMu.Unlock()
+					if err := s.flush(); err != nil {
 						return err
 					}
 				}
-
-				// Unlock I/O mutex before finalizing the write to avoid blocking other operations.
-				s.exclusiveMu.Unlock()
 
 				// Perform the actual write operation, ensuring durability if `sync` is enabled.
 				return s.writeEntry(entry, encoded, sync)
@@ -300,9 +292,6 @@ func (s *Segment) ReadAt(ctx context.Context, offset int64) (*domain.Entry, erro
 		if s.closed.Load() {
 			return ErrSegmentClosed
 		}
-
-		s.metadataMu.RLock()
-		defer s.metadataMu.RUnlock()
 
 		// Create bounded reader to prevent large allocations.
 		reader := io.NewSectionReader(s.file, offset, int64(s.options.PayloadOptions.MaxSize)+segment.HeaderSize)
@@ -403,9 +392,6 @@ func (s *Segment) ReadAll(ctx context.Context) ([]*domain.Entry, error) {
 			return ctx.Err()
 		default:
 			{
-				s.metadataMu.RLock()
-				defer s.metadataMu.RUnlock()
-
 				var offset int64
 				var errToReturn error
 
@@ -533,15 +519,12 @@ func (s *Segment) Rotate(context context.Context) (*Segment, error) {
 	buffer.WriteString(fmt.Sprintf("rotate-%d", s.id))
 	rotationEntry := Record{Payload: buffer.Bytes(), Type: domain.EntryRotation}
 
-	s.exclusiveMu.Lock()
 	// Prepare the rotation entry with proper sequence numbers while holding the lock.
 	// This maintains the atomic nature of WAL entries even during rotation.
 	entry, encoded, err := s.prepareEntry(&rotationEntry)
 	if err != nil {
-		s.exclusiveMu.Unlock()
 		return nil, s.formatError("failed to prepare rotation entry", err)
 	}
-	s.exclusiveMu.Unlock()
 
 	// Write rotation entry, ensuring complete write.
 	if err := s.writeEntry(entry, encoded, false); err != nil {
@@ -573,9 +556,7 @@ func (s *Segment) Rotate(context context.Context) (*Segment, error) {
 }
 
 // Flush ensures that all buffered data is written to disk.
-// If sync is true, forces an fsync to ensure data is persisted to disk.
-// Returns error if any write, flush or sync operations fail.
-func (s *Segment) Flush(ctx context.Context, sync bool) error {
+func (s *Segment) Flush(ctx context.Context) error {
 	if s.closed.Load() {
 		return ErrSegmentClosed
 	}
@@ -585,11 +566,7 @@ func (s *Segment) Flush(ctx context.Context, sync bool) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-			{
-				s.exclusiveMu.Lock()
-				defer s.exclusiveMu.Unlock()
-				return s.flushLocked(sync)
-			}
+			return s.flush()
 		}
 	})
 }
@@ -637,12 +614,6 @@ func (s *Segment) Close(ctx context.Context) error {
 			return ctx.Err()
 		default:
 			{
-				// Acquire the flush mutex to ensure exclusive access during cleanup.
-				// This prevents any concurrent flush operations from interfering
-				// with the closing sequence.
-				s.exclusiveMu.Lock()
-				defer s.exclusiveMu.Unlock()
-
 				// Cancel the segment's internal context to signal all background
 				// operations and workers that they should terminate.
 				s.cancel()
@@ -660,7 +631,7 @@ func (s *Segment) Close(ctx context.Context) error {
 
 				// 2. Perform final flush to ensure any remaining data is written.
 				// The 'true' parameter indicates this is the final flush during cleanup.
-				if err := s.flushLocked(true); err != nil {
+				if err := s.flush(); err != nil {
 					return err
 				}
 
@@ -690,21 +661,16 @@ func (s *Segment) RegisterRotationHandler(fn func(*Segment)) {
 }
 
 // Performs flush operation when the mutex is already held.
-func (s *Segment) flushLocked(sync bool) error {
+func (s *Segment) flush() error {
 	// First, flush any buffered data to the underlying writer.
 	// This moves data from the in-memory buffer to the OS buffer.
 	if err := s.writer.Flush(); err != nil {
 		return s.formatError("failed to flush buffer", err)
 	}
 
-	// Sync file to disk if either:
-	// 1. The sync parameter is true (forced sync).
-	// 2. The segment is configured to sync on every flush.
 	// This ensures data durability by writing OS buffers to disk.
-	if sync || s.options.SyncOnFlush || s.options.SyncOnWrite {
-		if err := s.file.Sync(); err != nil {
-			return s.formatError("failed to sync file", err)
-		}
+	if err := s.file.Sync(); err != nil {
+		return s.formatError("failed to sync file", err)
 	}
 
 	return nil
@@ -733,13 +699,6 @@ func (s *Segment) flushLocked(sync bool) error {
 // Returns:
 //   - error: An error if any step in the process fails, or nil on success.
 func (s *Segment) writeEntry(entry *domain.Entry, encoded []byte, sync bool) error {
-	// Acquire the I/O mutex to protect the I/O operations. This ensures that
-	// only one write or flush operation occurs at a time, preventing data races.
-	s.exclusiveMu.Lock()
-	// Ensure the I/O mutex is released when the function exits, regardless
-	// of whether an error occurs.
-	defer s.exclusiveMu.Unlock()
-
 	// Calculate the size of the entry header.
 	headerSize := binary.Size(entry.Header)
 	// Calculate the actual size of the entire entry (header + payload).
@@ -748,7 +707,7 @@ func (s *Segment) writeEntry(entry *domain.Entry, encoded []byte, sync bool) err
 	// Check if the buffer needs to be flushed before writing this entry.
 	// This ensures that there is enough space in the buffer for the new entry.
 	if s.shouldFlushBuffer(actualEntrySize) {
-		if err := s.flushLocked(sync); err != nil {
+		if err := s.flush(); err != nil {
 			return s.formatError("failed to flush buffer", err)
 		}
 	}
@@ -779,7 +738,13 @@ func (s *Segment) writeEntry(entry *domain.Entry, encoded []byte, sync bool) err
 
 	// Flush the buffer to disk if sync is requested. This provides
 	// durability guarantees at the expense of performance.
-	return s.flushLocked(sync)
+	if sync || s.options.SyncOnWrite {
+		if err := s.flush(); err != nil {
+			return s.formatError("failed to flush buffer", err)
+		}
+	}
+
+	return nil
 }
 
 // Ensures that adding a new entry won't exceed the segment's configured
@@ -787,20 +752,12 @@ func (s *Segment) writeEntry(entry *domain.Entry, encoded []byte, sync bool) err
 // this method initiates the rotation process to create a new segment.
 // Returns an error if the rotation process fails during size limit handling.
 func (s *Segment) checkSizeLimits(context context.Context, entrySize int) (*Segment, error) {
-	s.exclusiveMu.Lock()
-	defer s.exclusiveMu.Unlock()
-
 	// Check if adding the new entry would exceed the maximum segment size
 	// The size check uses int conversion to handle potential large values safely
 	if int(s.size)+entrySize > int(s.options.SegmentOptions.MaxSegmentSize) {
-		// We need to unlock before handling rotation to avoid deadlocks.
-		s.exclusiveMu.Unlock()
 		segment, err := s.handleRotation(context)
-		// Re-lock for consistency with the defer.
-		s.exclusiveMu.Lock()
-
 		if err != nil {
-			return s, err
+			return nil, err
 		}
 
 		if segment != nil {
@@ -822,17 +779,15 @@ func (s *Segment) handleRotation(context context.Context) (*Segment, error) {
 		return nil, s.formatError("failed to rotate segment", err)
 	}
 
+	newSegment.mu.Lock()
+	defer newSegment.mu.Unlock()
+
 	// Transfer rotation callback handler to the new segment.
-	// Update the segment reference to point to the new segment.
 	// Execute rotation callback if one is registered.
-	newSegment.metadataMu.Lock()
-	{
-		newSegment.onRotate = s.onRotate
-		if newSegment.onRotate != nil {
-			newSegment.onRotate(newSegment)
-		}
+	newSegment.onRotate = s.onRotate
+	if newSegment.onRotate != nil {
+		newSegment.onRotate(newSegment)
 	}
-	newSegment.metadataMu.Unlock()
 
 	return newSegment, nil
 }
@@ -842,7 +797,7 @@ func (s *Segment) handleRotation(context context.Context) (*Segment, error) {
 // Returns true if the buffer should be flushed, false otherwise.
 func (s *Segment) shouldFlushBuffer(additionalBytes int) bool {
 	available := s.writer.Available()
-	bufferSize := s.writer.Size()
+	bufferSize := s.options.BufferSize
 
 	// Perform an immediate flush if we can't accommodate the next write
 	// This is a critical check to prevent buffer overflow
@@ -850,10 +805,14 @@ func (s *Segment) shouldFlushBuffer(additionalBytes int) bool {
 		return true
 	}
 
-	// Implement preventive flushing based on a minimum available space threshold
+	// Preventive flushing based on a minimum available space threshold
 	// This helps maintain consistent write performance by avoiding situations
-	// where the buffer becomes too full
-	minAvailable := (bufferSize * segment.MinBufferAvailablePercent) / 100
+	// where the buffer becomes too full.
+	//
+	// Calculate the minimum available space as a percentage of total buffer size
+	// For example, if MinBufferAvailablePercent is 20, we want to maintain at least
+	// 20% of the buffer as available space.
+	minAvailable := int(float64(bufferSize) * segment.MinBufferAvailablePercent / 100.0)
 	return available < minAvailable
 }
 

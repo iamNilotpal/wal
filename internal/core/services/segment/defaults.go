@@ -11,12 +11,12 @@ const (
 	SegmentDirectory = "/segments"
 
 	MaxSegmentAge  = time.Duration(time.Hour * 24) // 24h
-	MinSegmentSize = 1048576                       // 1MB
-	MaxSegmentSize = 67108864                      // 64MB
-	HeaderSize     = 14                            // 14Bytes
+	MinSegmentSize = 1024 * 1024 * 1               // 1MB
+	MaxSegmentSize = 1024 * 1024 * 64              // 64MB
+	HeaderSize     = 8 + 4 + 1 + 1                 // 14Bytes
 
-	MinBufferAvailablePercent = 25
-	WriteTimeout              = 1 * time.Second
+	MinBufferAvailablePercent = 10
+	MinWriteTimeout           = 1 * time.Second
 	MaxWriteTimeout           = 10 * time.Second
 )
 

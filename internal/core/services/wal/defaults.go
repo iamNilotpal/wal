@@ -18,9 +18,8 @@ const (
 	MaxSegmentsKept = 10
 	Directory       = "./logs"
 
-	MinBufferSize     = 4096     // 4KB
-	DefaultBufferSize = 1048576  // 1MB
-	MaxBufferSize     = 16777216 // 16MB
+	DefaultBufferSize = 1024 * 1024 * 1  // 1MB
+	MaxBufferSize     = 1024 * 1024 * 16 // 16MB
 
 	CompactInterval = time.Duration(time.Hour * 1)    // 1h
 	FlushInterval   = time.Duration(time.Second * 5)  // 5s
@@ -28,7 +27,7 @@ const (
 )
 
 func prepareDefaults(opts *domain.WALOptions) *domain.WALOptions {
-	if opts.BufferSize == 0 || opts.BufferSize < MinBufferSize {
+	if opts.BufferSize == 0 || opts.BufferSize < DefaultBufferSize {
 		opts.BufferSize = DefaultBufferSize
 	}
 
@@ -61,10 +60,10 @@ func prepareDefaults(opts *domain.WALOptions) *domain.WALOptions {
 	}
 
 	if opts.WriteTimeout == 0 {
-		opts.WriteTimeout = segment.WriteTimeout
+		opts.WriteTimeout = segment.MinWriteTimeout
 	}
 
-	if opts.WriteTimeout != 0 && opts.WriteTimeout > segment.WriteTimeout {
+	if opts.WriteTimeout != 0 && opts.WriteTimeout > segment.MinWriteTimeout {
 		opts.WriteTimeout = segment.MaxWriteTimeout
 	}
 
