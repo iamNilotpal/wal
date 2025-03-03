@@ -236,8 +236,7 @@ func (s *Segment) Write(ctx context.Context, record *Record, sync bool) error {
 		default:
 			{
 				// Estimate entry size for rotation check (more accurate size calculated after preparation).
-				headerSize := binary.Size(domain.EntryHeader{})
-				estimatedSize := len(record.Payload) + headerSize
+				estimatedSize := len(record.Payload) + segment.HeaderSize
 
 				// Check if rotation is needed before proceeding with the write.
 				// Only normal entries are subject to size limits; metadata entries must always be written.
@@ -258,7 +257,7 @@ func (s *Segment) Write(ctx context.Context, record *Record, sync bool) error {
 				}
 
 				// Compute actual entry size after encoding.
-				actualEntrySize := len(encoded) + headerSize
+				actualEntrySize := len(encoded) + segment.HeaderSize
 
 				// Check if the write buffer needs to be flushed to make space for this entry.
 				if s.shouldFlushBuffer(actualEntrySize) {
@@ -323,19 +322,19 @@ func (s *Segment) ReadAt(ctx context.Context, offset int64) (*domain.Entry, erro
 
 		// Method - 1
 		// Read the payload from the file into the buffer.
-		if nn, err := io.Copy(buffer, reader); err != nil && !stdErrors.Is(err, io.EOF) {
-			return s.formatError("failed to read file", err)
-		} else if nn < int64(payloadSize) {
-			return s.formatError(fmt.Sprintf("partial read, %d != %d", payloadSize, nn), err)
-		}
+		// if nn, err := io.Copy(buffer, reader); err != nil && !stdErrors.Is(err, io.EOF) {
+		// 	return s.formatError("failed to read file", err)
+		// } else if nn < int64(payloadSize) {
+		// 	return s.formatError(fmt.Sprintf("partial read, %d != %d", payloadSize, nn), err)
+		// }
 
 		// Method - 2
 		// Read the payload from the file into the buffer.
-		// if nn, err := io.ReadFull(reader, payload); err != nil && !stdErrors.Is(err, io.EOF) {
-		// 	return s.formatError("failed to read file", err)
-		// } else if nn < payloadSize {
-		// 	return s.formatError(fmt.Sprintf("partial read, %d != %d", payloadSize, nn), err)
-		// }
+		if nn, err := io.ReadFull(reader, payload); err != nil && !stdErrors.Is(err, io.EOF) {
+			return s.formatError("failed to read file", err)
+		} else if nn < payloadSize {
+			return s.formatError(fmt.Sprintf("partial read, %d != %d", payloadSize, nn), err)
+		}
 
 		// If compression is enabled and the payload is marked as compressed, decompress it.
 		if s.options.CompressionOptions.Enable && entry.Header.Compressed {
@@ -420,30 +419,30 @@ func (s *Segment) ReadAll(ctx context.Context) ([]*domain.Entry, error) {
 							// Retrieve a buffer from the pool to minimize allocations.
 							buffer := s.bufferPool.Get()
 							payloadSize := int(header.PayloadSize)
-							entry := &domain.Entry{Header: &header}
 
 							// Ensure the buffer has sufficient capacity.
 							if buffer.Cap() < payloadSize {
 								buffer.Grow(payloadSize)
 							}
 
+							entry := &domain.Entry{Header: &header}
+							payload := buffer.Bytes()[:payloadSize]
+
 							// Method - 1
 							// Read the full payload into the buffer.
-							if _, err := io.Copy(buffer, sectionReader); err != nil && !stdErrors.Is(err, io.EOF) {
-								s.bufferPool.Put(buffer)
-								errToReturn = s.formatError("failed to read payload", err)
-								break outerLoop
-							}
-
-							// Method - 2
-							// Read the full payload into the buffer.
-							// if _, err := io.ReadFull(sectionReader, payload); err != nil && !stdErrors.Is(err, io.EOF) {
+							// if _, err := io.Copy(buffer, sectionReader); err != nil && !stdErrors.Is(err, io.EOF) {
 							// 	s.bufferPool.Put(buffer)
 							// 	errToReturn = s.formatError("failed to read payload", err)
 							// 	break outerLoop
 							// }
 
-							payload := buffer.Bytes()[:payloadSize]
+							// Method - 2
+							// Read the full payload into the buffer.
+							if _, err := io.ReadFull(sectionReader, payload); err != nil && !stdErrors.Is(err, io.EOF) {
+								s.bufferPool.Put(buffer)
+								errToReturn = s.formatError("failed to read payload", err)
+								break outerLoop
+							}
 
 							// If compression is enabled and the payload is marked as compressed, decompress it.
 							if s.options.CompressionOptions.Enable && header.Compressed {
@@ -716,10 +715,8 @@ func (s *Segment) flush() error {
 // Returns:
 //   - error: An error if any step in the process fails, or nil on success.
 func (s *Segment) writeEntry(entry *domain.Entry, encoded []byte, sync bool) error {
-	// Calculate the size of the entry header.
-	headerSize := binary.Size(entry.Header)
 	// Calculate the actual size of the entire entry (header + payload).
-	actualEntrySize := len(encoded) + headerSize
+	actualEntrySize := len(encoded) + segment.HeaderSize
 
 	// Check if the buffer needs to be flushed before writing this entry.
 	// This ensures that there is enough space in the buffer for the new entry.

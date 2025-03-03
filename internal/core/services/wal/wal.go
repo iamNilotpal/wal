@@ -149,7 +149,6 @@ func (wal *WAL) Write(context context.Context, data []byte, sync bool) error {
 
 	wal.mu.Lock()
 	defer wal.mu.Unlock()
-
 	return wal.sm.Write(context, data, sync)
 }
 
