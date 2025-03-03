@@ -506,50 +506,59 @@ func (s *Segment) ReadAll(ctx context.Context) ([]*domain.Entry, error) {
 //   - 2. Writes a special rotation record to mark the transition.
 //   - 3. Safely closes the current segment.
 //   - 4. Creates and returns a new segment.
-func (s *Segment) Rotate(context context.Context) (*Segment, error) {
+func (s *Segment) Rotate(ctx context.Context) (*Segment, error) {
 	if s.closed.Load() {
 		return nil, ErrSegmentClosed
 	}
 
-	buffer := s.bufferPool.Get()
-	defer s.bufferPool.Put(buffer)
+	var segment *Segment
 
-	// Create a rotation record with the current segment's ID.
-	// This serves as a marker in the log to indicate where rotation occurred.
-	buffer.WriteString(fmt.Sprintf("rotate-%d", s.id))
-	rotationEntry := Record{Payload: buffer.Bytes(), Type: domain.EntryRotation}
+	if err := system.RunWithContext(ctx, func(ctx context.Context) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			{
+				buffer := s.bufferPool.Get()
+				defer s.bufferPool.Put(buffer)
 
-	// Prepare the rotation entry with proper sequence numbers while holding the lock.
-	// This maintains the atomic nature of WAL entries even during rotation.
-	entry, encoded, err := s.prepareEntry(&rotationEntry)
-	if err != nil {
-		return nil, s.formatError("failed to prepare rotation entry", err)
-	}
+				// Create a rotation record with the current segment's ID.
+				// This serves as a marker in the log to indicate where rotation occurred.
+				buffer.WriteString(fmt.Sprintf("rotate-%d", s.id))
+				rotationEntry := Record{Payload: buffer.Bytes(), Type: domain.EntryRotation}
 
-	// Write rotation entry, ensuring complete write.
-	if err := s.writeEntry(entry, encoded, false); err != nil {
+				// Prepare the rotation entry with proper sequence numbers while holding the lock.
+				// This maintains the atomic nature of WAL entries even during rotation.
+				entry, encoded, err := s.prepareEntry(&rotationEntry)
+				if err != nil {
+					return s.formatError("failed to prepare rotation entry", err)
+				}
+
+				// Write rotation entry, ensuring complete write.
+				if err := s.writeEntry(entry, encoded, false); err != nil {
+					return err
+				}
+
+				// Close the current segment, which includes flushing and syncing all data
+				// This ensures all data is safely persisted before we transition to the new segment
+				if err := s.Close(ctx); err != nil {
+					return s.formatError("failed to close segment during rotation", err)
+				}
+
+				// Create a new segment with an incremented ID.
+				// The new segment starts fresh with reset sequence numbers and size counter
+				if segment, err = New(
+					ctx,
+					&Config{NextLogSequence: 0, TotalSizeInBytes: 0, SegmentId: s.id + 1, Options: s.options},
+				); err != nil {
+					return s.formatError("failed to create new segment during rotation", err)
+				}
+
+				return nil
+			}
+		}
+	}); err != nil {
 		return nil, err
-	}
-
-	// Close the current segment, which includes flushing and syncing all data
-	// This ensures all data is safely persisted before we transition to the new segment
-	if err := s.Close(context); err != nil {
-		return nil, s.formatError("failed to close segment during rotation", err)
-	}
-
-	// Create a new segment with an incremented ID.
-	// The new segment starts fresh with reset sequence numbers and size counter
-	segment, err := New(
-		context,
-		&Config{
-			NextLogSequence:  0,
-			TotalSizeInBytes: 0,
-			SegmentId:        s.id + 1,
-			Options:          s.options,
-		},
-	)
-	if err != nil {
-		return nil, s.formatError("failed to create new segment during rotation", err)
 	}
 
 	return segment, nil
@@ -577,22 +586,30 @@ func (s *Segment) Flush(ctx context.Context) error {
 // the segment to ensure data durability.
 //
 // Returns an error if either writing the final entry or flushing fails.
-func (s *Segment) Finalize(context context.Context) error {
+func (s *Segment) Finalize(ctx context.Context) error {
 	if s.closed.Load() {
 		return ErrSegmentClosed
 	}
 
-	buffer := s.bufferPool.Get()
-	defer s.bufferPool.Put(buffer)
+	return system.RunWithContext(ctx, func(ctx context.Context) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			{
+				buffer := s.bufferPool.Get()
+				defer s.bufferPool.Put(buffer)
 
-	buffer.WriteString("final entry")
-	entry := Record{Payload: buffer.Bytes(), Type: domain.EntrySegmentFinalize}
+				buffer.WriteString("final entry")
+				entry := Record{Payload: buffer.Bytes(), Type: domain.EntrySegmentFinalize}
 
-	if err := s.Write(context, &entry, true); err != nil {
-		return s.formatError("failed to write final entry", err)
-	}
-
-	return nil
+				if err := s.Write(ctx, &entry, true); err != nil {
+					return s.formatError("failed to write final entry", err)
+				}
+				return nil
+			}
+		}
+	})
 }
 
 // Close safely shuts down the segment and releases all associated resources.
