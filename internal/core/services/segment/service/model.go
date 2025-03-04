@@ -50,7 +50,6 @@ type Segment struct {
 	wg     sync.WaitGroup     // Tracks completion of background tasks.
 	cancel context.CancelFunc // Function to trigger graceful shutdown.
 	ctx    context.Context    // Context for canceling background operations.
-	mu     sync.Mutex         // Ensures exclusive access to the segment, allowing only one reader or writer at a time.
 }
 
 // SegmentInfo holds the metadata and statistics about a storage segment.

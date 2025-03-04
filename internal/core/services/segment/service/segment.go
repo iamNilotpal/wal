@@ -2,6 +2,7 @@ package segment
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/binary"
 	stdErrors "errors"
@@ -285,83 +286,31 @@ func (s *Segment) Write(ctx context.Context, record *Record, sync bool) error {
 //   - *domain.Entry: The deserialized entry read from the file.
 //   - error: An error if any step in the process fails, such as file seeking, reading, decompression, or validation.
 func (s *Segment) ReadAt(ctx context.Context, offset int64) (*domain.Entry, error) {
+	if s.closed.Load() {
+		return nil, ErrSegmentClosed
+	}
+
+	// Prepare an empty entry and obtain a buffer from the pool.
+	// Using a buffer pool helps reduce garbage collection overhead.
+	// Ensure the buffer is returned to the pool after method completion.
 	entry := &domain.Entry{}
+	buffer := s.bufferPool.Get()
+	defer s.bufferPool.Put(buffer)
 
 	if err := system.RunWithContext(ctx, func(ctx context.Context) error {
-		if s.closed.Load() {
-			return ErrSegmentClosed
-		}
+		// Create a section reader with carefully bounded read limits
+		// This prevents excessive memory allocation by restricting read size.
+		reader := io.NewSectionReader(
+			s.file,
+			offset,
+			int64(s.options.PayloadOptions.MaxSize)+segment.HeaderSize,
+		)
 
-		// Create bounded reader to prevent large allocations.
-		reader := io.NewSectionReader(s.file, offset, int64(s.options.PayloadOptions.MaxSize)+segment.HeaderSize)
-
-		// Read the entry header from the file.
-		var header domain.EntryHeader
-		if err := binary.Read(reader, binary.LittleEndian, &header); err != nil {
-			return s.formatError("failed to read header", err)
-		}
-
-		// Validate header before allocation.
-		if err := header.Validate(); err != nil {
+		// Delegate the actual reading to the internal read method.
+		if data, err := s.read(reader, buffer); err != nil {
 			return err
-		}
-
-		// Get a buffer from the buffer pool to hold the payload.
-		buffer := s.bufferPool.Get()
-		defer s.bufferPool.Put(buffer)
-
-		payloadSize := int(header.PayloadSize)
-
-		// Ensure the buffer has sufficient capacity.
-		if buffer.Cap() < payloadSize {
-			buffer.Grow(payloadSize)
-		}
-
-		entry.Header = &header
-		payload := buffer.Bytes()[:payloadSize]
-
-		// Method - 1
-		// Read the payload from the file into the buffer.
-		// if nn, err := io.Copy(buffer, reader); err != nil && !stdErrors.Is(err, io.EOF) {
-		// 	return s.formatError("failed to read file", err)
-		// } else if nn < int64(payloadSize) {
-		// 	return s.formatError(fmt.Sprintf("partial read, %d != %d", payloadSize, nn), err)
-		// }
-
-		// Method - 2
-		// Read the payload from the file into the buffer.
-		if nn, err := io.ReadFull(reader, payload); err != nil && !stdErrors.Is(err, io.EOF) {
-			return s.formatError("failed to read file", err)
-		} else if nn < payloadSize {
-			return s.formatError(fmt.Sprintf("partial read, %d != %d", payloadSize, nn), err)
-		}
-
-		// If compression is enabled and the payload is marked as compressed, decompress it.
-		if s.options.CompressionOptions.Enable && entry.Header.Compressed {
-			decompressedPayload, err := s.compressor.Decompress(payload)
-			if err != nil {
-				return s.formatError("failed decompress data", err)
-			}
-
-			buffer.Reset()
-			buffer.Grow(len(decompressedPayload))
-			buffer.Write(decompressedPayload)
-			payload = buffer.Bytes()[:len(decompressedPayload)]
-		}
-
-		if err := entry.UnMarshalProto(payload); err != nil {
-			return err
-		}
-
-		if s.options.ChecksumOptions.VerifyOnRead {
-			ok, err := s.verifyChecksum(entry)
-			if err != nil {
-				return s.formatError("failed to validate checksum", err)
-			}
-
-			if !ok {
-				return s.formatError("invalid signature", ErrInvalidChecksum)
-			}
+		} else {
+			entry = data
 		}
 
 		return nil
@@ -379,13 +328,15 @@ func (s *Segment) ReadAt(ctx context.Context, offset int64) (*domain.Entry, erro
 // deserializing them into domain.Entry objects. It leverages a buffer pool to optimize memory allocation and
 // supports decompression when necessary. In case of errors, it returns all successfully read entries alongside the error.
 func (s *Segment) ReadAll(ctx context.Context) ([]*domain.Entry, error) {
-	// Estimate capacity based on average entry size.
+	if s.closed.Load() {
+		return []*domain.Entry{}, ErrSegmentClosed
+	}
+
+	// Estimate initial slice capacity to minimize memory reallocations.
+	// Calculation divides total file size by estimated entry size (header + 1MB).
+	// This provides a rough initial capacity to improve slice performance.
 	estimatedCapacity := int(s.size) / (segment.HeaderSize + 1048576) // 1048576 = 1MB
 	entries := make([]*domain.Entry, 0, estimatedCapacity)
-
-	if s.closed.Load() {
-		return entries, ErrSegmentClosed
-	}
 
 	if err := system.RunWithContext(ctx, func(ctx context.Context) error {
 		select {
@@ -393,103 +344,32 @@ func (s *Segment) ReadAll(ctx context.Context) ([]*domain.Entry, error) {
 			return ctx.Err()
 		default:
 			{
+				// Initialize offset tracking from the start of the file.
 				var offset int64
-				var errToReturn error
 
-			outerLoop:
+				buffer := s.bufferPool.Get()
+				defer s.bufferPool.Put(buffer)
+
 				for offset < int64(s.size) {
-					select {
-					case <-ctx.Done():
-						return ctx.Err()
-					default:
-						{
-							var header domain.EntryHeader
-							// Create a section reader to read the next entry header and payload.
-							sectionReader := io.NewSectionReader(
-								s.file, offset, int64(s.options.PayloadOptions.MaxSize)+segment.HeaderSize,
-							)
+					// Create a section reader with carefully bounded read limits
+					// This prevents excessive memory allocation by restricting read size.
+					reader := io.NewSectionReader(
+						s.file, offset, int64(s.options.PayloadOptions.MaxSize)+segment.HeaderSize,
+					)
 
-							// Read the entry header (metadata) from the segment file.
-							if err := binary.Read(sectionReader, binary.LittleEndian, &header); err != nil {
-								if stdErrors.Is(err, io.EOF) {
-									break outerLoop
-								}
-								errToReturn = err
-								break outerLoop
-							}
-
-							// Retrieve a buffer from the pool to minimize allocations.
-							buffer := s.bufferPool.Get()
-							payloadSize := int(header.PayloadSize)
-
-							// Ensure the buffer has sufficient capacity.
-							if buffer.Cap() < payloadSize {
-								buffer.Grow(payloadSize)
-							}
-
-							entry := &domain.Entry{Header: &header}
-							payload := buffer.Bytes()[:payloadSize]
-
-							// Method - 1
-							// Read the full payload into the buffer.
-							// if _, err := io.Copy(buffer, sectionReader); err != nil && !stdErrors.Is(err, io.EOF) {
-							// 	s.bufferPool.Put(buffer)
-							// 	errToReturn = s.formatError("failed to read payload", err)
-							// 	break outerLoop
-							// }
-
-							// Method - 2
-							// Read the full payload into the buffer.
-							if _, err := io.ReadFull(sectionReader, payload); err != nil && !stdErrors.Is(err, io.EOF) {
-								s.bufferPool.Put(buffer)
-								errToReturn = s.formatError("failed to read payload", err)
-								break outerLoop
-							}
-
-							// If compression is enabled and the payload is marked as compressed, decompress it.
-							if s.options.CompressionOptions.Enable && header.Compressed {
-								decompressedPayload, err := s.compressor.Decompress(payload)
-								if err != nil {
-									s.bufferPool.Put(buffer)
-									errToReturn = s.formatError("failed decompress data", err)
-									break outerLoop
-								}
-
-								// Reset buffer and store decompressed data.
-								buffer.Reset()
-								buffer.Grow(len(decompressedPayload))
-								buffer.Write(decompressedPayload)
-								payload = buffer.Bytes()
-							}
-
-							// Deserialize the payload into the Entry object.
-							if err := entry.UnMarshalProto(payload); err != nil {
-								s.bufferPool.Put(buffer)
-								errToReturn = err
-								break outerLoop
-							}
-
-							if s.options.ChecksumOptions.VerifyOnRead {
-								ok, err := s.verifyChecksum(entry)
-								if err != nil {
-									errToReturn = s.formatError("failed to validate checksum", err)
-									break outerLoop
-								}
-
-								if !ok {
-									errToReturn = s.formatError("invalid signature", ErrInvalidChecksum)
-									break outerLoop
-								}
-							}
-
-							s.bufferPool.Put(buffer)
-							entries = append(entries, entry)
-							// Move the offset forward by the size of the read entry.
-							offset += int64(header.PayloadSize + segment.HeaderSize)
-						}
+					// Read the next entry using internal read method.
+					entry, err := s.read(reader, buffer)
+					if err != nil {
+						return err
 					}
+
+					// Append successfully read entry to results.
+					entries = append(entries, entry)
+					// Advance offset by the size of the read entry.
+					// Includes both header and payload sizes.
+					offset += int64(entry.Header.PayloadSize + segment.HeaderSize)
 				}
-				return errToReturn
+				return nil
 			}
 		}
 	}); err != nil {
@@ -694,6 +574,89 @@ func (s *Segment) flush() error {
 	return nil
 }
 
+// read is a critical method responsible for reading and parsing a single Entry from a segment file.
+// It handles the complex process of extracting entry data with multiple optional processing steps:
+//
+//  1. Header Parsing: Reads metadata about the entry's structure and properties.
+//  2. Payload Extraction: Reads the exact number of bytes specified in the header.
+//  3. Decompression (Optional): Automatically decompresses compressed entries.
+//  4. Deserialization: Converts raw bytes into a structured Entry object.
+//  5. Integrity Verification (Optional): Validates entry data using checksums.
+//
+// Parameters:
+//   - reader: The input stream from which entry data will be read.
+//   - buffer: A reusable byte buffer to minimize memory allocations.
+//
+// Returns:
+//   - A fully populated domain.Entry object.
+//   - An error if any stage of reading or processing fails.
+func (s *Segment) read(reader io.Reader, buffer *bytes.Buffer) (*domain.Entry, error) {
+	// Declare a variable to store the entry's header metadata
+	// The header contains essential information about the entry's structure and properties
+	var header domain.EntryHeader
+
+	// Read the entry header from the segment file.
+	// Binary.Read uses LittleEndian encoding to parse the header's binary data.
+	// This step extracts metadata like payload size, compression flag, and other entry attributes.
+	// We handle EOF (End of File) as a special case to distinguish between regular reads and stream termination.
+	if err := binary.Read(reader, binary.LittleEndian, &header); err != nil && !stdErrors.Is(err, io.EOF) {
+		return nil, err
+	}
+
+	payloadSize := int(header.PayloadSize)
+
+	// Ensure the buffer has enough capacity to hold the entire payload.
+	// If the current buffer is too small, grow it to the required size.
+	// This prevents potential memory allocation errors and reduces reallocation overhead.
+	if buffer.Cap() < payloadSize {
+		buffer.Grow(payloadSize)
+	}
+
+	entry := &domain.Entry{Header: &header}
+	payload := buffer.Bytes()[:payloadSize]
+
+	// Perform a full read of the payload, ensuring we read exactly 'payloadSize' bytes.
+	// io.ReadFull guarantees we either read all required bytes or encounter an error.
+	// We again handle EOF as a special case to distinguish between regular reads and stream termination.
+	if _, err := io.ReadFull(reader, payload); err != nil && !stdErrors.Is(err, io.EOF) {
+		return nil, s.formatError("failed to read payload", err)
+	}
+
+	// Optional decompression step: handle compressed payloads if compression is enabled.
+	// This block checks if the entry is compressed and decompresses it if necessary.
+	if s.options.CompressionOptions.Enable && header.Compressed {
+		decompressedPayload, err := s.compressor.Decompress(payload)
+		if err != nil {
+			return nil, s.formatError("failed decompress data", err)
+		}
+
+		// Reset the buffer and prepare it with the decompressed data.
+		// This ensures we're working with the original, uncompressed payload.
+		buffer.Reset()
+		buffer.Grow(len(decompressedPayload))
+		buffer.Write(decompressedPayload)
+		payload = buffer.Bytes()
+	}
+
+	// Deserialize the payload into the Entry object.
+	// This converts the raw byte payload into a structured Go object.
+	if err := entry.UnMarshalProto(payload); err != nil {
+		return nil, err
+	}
+
+	// Optional checksum verification step.
+	// If enabled in the options, verify the entry's integrity.
+	if s.options.ChecksumOptions.VerifyOnRead {
+		if ok, err := s.verifyChecksum(entry); err != nil {
+			return nil, s.formatError("failed to validate checksum", err)
+		} else if !ok {
+			return nil, s.formatError("invalid signature", ErrInvalidChecksum)
+		}
+	}
+
+	return entry, nil
+}
+
 // writeEntry performs the low-level operation of writing a prepared entry
 // to the segment's underlying writer. It handles flushing the buffer if
 // necessary, writes the entry header and payload, updates segment metadata,
@@ -794,9 +757,6 @@ func (s *Segment) handleRotation(context context.Context) (*Segment, error) {
 	if err != nil {
 		return nil, s.formatError("failed to rotate segment", err)
 	}
-
-	newSegment.mu.Lock()
-	defer newSegment.mu.Unlock()
 
 	// Transfer rotation callback handler to the new segment.
 	// Execute rotation callback if one is registered.
